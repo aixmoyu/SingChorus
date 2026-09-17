@@ -1,0 +1,11 @@
+# Docker 构建上下文瘦身（packages/cloud/Dockerfile 的 context 是仓库根目录）
+.git
+**/node_modules
+**/.wrangler
+logs
+packages/*/dist
+packages/*/dist-node
+packages/*/dist-web
+packages/*/dist-server
+packages/cloud/data
+docs

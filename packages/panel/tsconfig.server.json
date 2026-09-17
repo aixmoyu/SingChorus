@@ -1,0 +1,18 @@
+{
+  "extends": "@tsconfig/node22/tsconfig.json",
+  "include": ["server/**/*.ts"],
+  "compilerOptions": {
+    "outDir": "dist-server",
+    "rootDir": "server",
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "resolveJsonModule": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}

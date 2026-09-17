@@ -1,0 +1,66 @@
+# ---- Dependencies (reproducible from lockfiles) ----
+node_modules/
+**/node_modules/
+# pnpm workspace 只允许根目录 lockfile，防止子包误提交（曾导致 Cloudflare 子目录部署构建失败）
+packages/*/pnpm-lock.yaml
+
+# ---- Python ----
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+
+# ---- Build outputs ----
+dist/
+build/
+**/dist-node/
+**/*.egg-info/
+**/.next/
+**/.tsbuildinfo
+**/*.tsbuildinfo
+
+# ---- Runtime / tooling state ----
+logs/
+.opencode-trace/
+.aet/
+.singchorus/
+
+# ---- Wrangler (Cloudflare Workers) local dev state ----
+.wrangler/
+**/.wrangler/
+
+# ---- Self-hosted (Node) runtime data: SQLite db + auto-generated secrets ----
+packages/cloud/data/
+**/secrets.json
+
+# ---- Wrangler production config (auto-generated, contains real resource IDs) ----
+**/wrangler.prod.toml
+**/.prod.vars
+
+# ---- Local env / secrets ----
+.env
+.env.local
+**/.env
+**/.env.*
+.dev.vars
+**/.dev.vars
+!**/.dev.vars.example
+
+# ---- Temp / test artifacts ----
+test.json
+test.zip
+*.test.json
+*.test.zip
+
+# ---- Vendored binaries (too large to commit; reproducible from upstream) ----
+packages/cloud/bin/
+
+# ---- OS / IDE ----
+.DS_Store
+.idea/
+*.swp
+*.swo

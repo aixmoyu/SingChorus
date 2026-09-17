@@ -1,0 +1,76 @@
+{
+  "name": "@chorus/panel",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "ChorusPanel - Web management UI for SingChorus (Vue 3 + Express)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aixmoyu/SingChorus.git",
+    "directory": "packages/panel"
+  },
+  "bin": {
+    "chorus-panel": "./bin/chorus-panel.mjs"
+  },
+  "files": [
+    "bin",
+    "dist-server",
+    "dist-web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"pnpm run dev:server | pino-pretty\" \"pnpm run dev:web\"",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:server": "tsx watch server/index.ts",
+    "build": "vue-tsc --noEmit && vite build && pnpm run build:server",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "node dist-server/index.js",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "axios": "^1.7.7",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "naive-ui": "^2.40.1",
+    "pinia": "^2.2.4",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "vfonts": "^0.0.3",
+    "vue": "^3.5.12",
+    "vue-router": "^4.4.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/compression": "^1.8.1",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.7.5",
+    "@types/supertest": "^6.0.2",
+    "@vitejs/plugin-vue": "^5.1.4",
+    "@vue/tsconfig": "^0.5.1",
+    "concurrently": "^9.0.1",
+    "pino-pretty": "^13.1.3",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.2",
+    "vue-tsc": "^2.1.6"
+  }
+}

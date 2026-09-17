@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+
+# pnpm v10+ 默认阻止依赖的 build 脚本，这里放行 wrangler / 本地运行所需的原生包
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  workerd: true
+  sharp: true
+  vue-demi: true

@@ -1,0 +1,39 @@
+{
+  "name": "@chorus/ctl",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SingChorus 命令行管理工具（chorusctl）",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aixmoyu/SingChorus.git",
+    "directory": "packages/ctl"
+  },
+  "bin": {
+    "chorusctl": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@chorus/core": "workspace:*",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2",
+    "@types/node": "^22.7.5",
+    "vitest": "^3.0.0",
+    "tsx": "^4.19.1"
+  }
+}
