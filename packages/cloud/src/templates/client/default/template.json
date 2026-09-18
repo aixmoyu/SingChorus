@@ -37,29 +37,36 @@
     ],
     "rules": [
       {
+        "rule_set": "geosite-category-ads-all",
+        "action": "predefined",
+        "rcode": "REFUSED"
+      },
+      {
+        "query_type": [
+          32,
+          33
+        ],
+        "action": "predefined",
+        "rcode": "REFUSED"
+      },
+      {
+        "rule_set": [
+          "geosite-geolocation-!cn",
+          "geosite-gfw"
+        ],
+        "server": "dns-remote"
+      },
+      {
         "clash_mode": "Direct",
         "server": "dns-local"
       },
       {
         "clash_mode": "Global",
         "server": "dns-remote"
-      },
-      {
-        "rule_set": "geosite-category-ads-all",
-        "action": "predefined",
-        "rcode": "REFUSED"
-      },
-      {
-        "query_type": [32, 33],
-        "action": "predefined",
-        "rcode": "REFUSED"
-      },
-      {
-        "rule_set": ["geosite-geolocation-!cn", "geosite-gfw"],
-        "server": "dns-remote"
       }
     ],
     "disable_cache": false,
+    "strategy": "prefer_ipv4",
     "final": "dns-local"
   },
   "inbounds": [
@@ -67,14 +74,19 @@
       "type": "tun",
       "tag": "tun-in",
       "interface_name": "tun0",
-      "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
-      "route_exclude_address": ["192.168.0.0/16", "172.16.0.0/12", "fc00::/7"],
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "route_exclude_address": [
+        "192.168.0.0/16",
+        "172.16.0.0/12",
+        "fc00::/7"
+      ],
       "mtu": 9000,
       "auto_route": true,
       "strict_route": true,
       "exclude_interface": "tailscale0",
-      "endpoint_independent_nat": false,
-      "stack": "system",
       "platform": {
         "http_proxy": {
           "enabled": true,
@@ -95,97 +107,171 @@
     {
       "tag": "proxy",
       "type": "selector",
-      "outbounds": ["auto", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "auto",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🥞 Google",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🐈‍⬛ GitHub",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "♾️ Meta",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🐦 Twitter",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🅰️ Adobe",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "⛅ Cloudflare",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🪟 Microsoft",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🍎 Apple",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "📺 Bilibili",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "👥 Social",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🎬 Media",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🧠 AI",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🎮 Game",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🎓 Scholar",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🚢 Container",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🌏 !cn",
       "type": "selector",
-      "outbounds": ["proxy", "direct", "{{ proxy_tags }}"]
+      "outbounds": [
+        "proxy",
+        "direct",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "🇨🇳 cn",
       "type": "selector",
-      "outbounds": ["direct", "proxy", "{{ proxy_tags }}"]
+      "outbounds": [
+        "direct",
+        "proxy",
+        "{{ proxy_tags }}"
+      ]
     },
     {
       "tag": "auto",
       "type": "urltest",
-      "outbounds": ["{{ proxy_tags }}"],
+      "outbounds": [
+        "{{ proxy_tags }}"
+      ],
       "url": "http://www.gstatic.com/generate_204",
       "interval": "10m",
       "tolerance": 50
@@ -208,20 +294,15 @@
     "final": "proxy",
     "rules": [
       {
-        "action": "resolve",
-        "strategy": "prefer_ipv4"
+        "rule_set": [
+          "geoip-private",
+          "geosite-private"
+        ],
+        "outbound": "direct"
       },
       {
-        "action": "sniff",
-        "timeout": "1s"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "rule_set": "geosite-category-ads-all",
-        "action": "reject"
+        "ip_is_private": true,
+        "outbound": "direct"
       },
       {
         "domain": [
@@ -246,19 +327,29 @@
         "outbound": "proxy"
       },
       {
-        "rule_set": ["geoip-private", "geosite-private"],
-        "outbound": "direct"
+        "action": "sniff",
+        "timeout": "1s"
       },
       {
-        "ip_is_private": true,
-        "outbound": "direct"
+        "protocol": "dns",
+        "action": "hijack-dns"
       },
       {
-        "rule_set": ["geoip-google", "geosite-google", "geosite-youtube"],
+        "rule_set": "geosite-category-ads-all",
+        "action": "reject"
+      },
+      {
+        "rule_set": [
+          "geoip-google",
+          "geosite-google"
+        ],
         "outbound": "🥞 Google"
       },
       {
-        "domain": ["googleapis.cn", "gstatic.com"],
+        "domain": [
+          "googleapis.cn",
+          "gstatic.com"
+        ],
         "outbound": "🥞 Google"
       },
       {
@@ -270,13 +361,16 @@
           "geosite-meta",
           "geoip-facebook",
           "geosite-facebook",
-          "geosite-instagram",
-          "geosite-whatsapp"
+          "geosite-instagram"
         ],
         "outbound": "♾️ Meta"
       },
       {
-        "rule_set": ["geoip-twitter", "geosite-twitter", "geosite-x"],
+        "rule_set": [
+          "geoip-twitter",
+          "geosite-twitter",
+          "geosite-x"
+        ],
         "outbound": "🐦 Twitter"
       },
       {
@@ -284,7 +378,10 @@
         "outbound": "🅰️ Adobe"
       },
       {
-        "rule_set": ["geoip-cloudflare", "geosite-cloudflare"],
+        "rule_set": [
+          "geoip-cloudflare",
+          "geosite-cloudflare"
+        ],
         "outbound": "⛅ Cloudflare"
       },
       {
@@ -298,11 +395,17 @@
         "outbound": "🪟 Microsoft"
       },
       {
-        "rule_set": ["geosite-apple", "geosite-icloud"],
+        "rule_set": [
+          "geosite-apple",
+          "geosite-icloud"
+        ],
         "outbound": "🍎 Apple"
       },
       {
-        "rule_set": ["geosite-bilibili", "geosite-biliintl"],
+        "rule_set": [
+          "geosite-bilibili",
+          "geosite-biliintl"
+        ],
         "outbound": "📺 Bilibili"
       },
       {
@@ -343,11 +446,18 @@
         "outbound": "🎬 Media"
       },
       {
-        "rule_set": ["geosite-category-ai-!cn", "geosite-category-ai-chat-!cn"],
+        "rule_set": [
+          "geosite-category-ai-!cn",
+          "geosite-category-ai-chat-!cn",
+          "geosite-openai",
+          "geosite-google-gemini",
+          "geosite-anthropic"
+        ],
         "outbound": "🧠 AI"
       },
       {
         "rule_set": [
+          "geosite-category-games",
           "geosite-category-game-platforms-download",
           "geosite-category-enhance-gaming",
           "geosite-epicgames",
@@ -356,11 +466,15 @@
         "outbound": "🎮 Game"
       },
       {
-        "rule_set": ["geosite-category-scholar-!cn"],
+        "rule_set": [
+          "geosite-category-scholar-!cn"
+        ],
         "outbound": "🎓 Scholar"
       },
       {
-        "rule_set": ["geosite-category-container"],
+        "rule_set": [
+          "geosite-category-container"
+        ],
         "outbound": "🚢 Container"
       },
       {
@@ -384,7 +498,10 @@
         "outbound": "🇨🇳 cn"
       },
       {
-        "rule_set": ["geosite-geolocation-!cn", "geosite-gfw"],
+        "rule_set": [
+          "geosite-geolocation-!cn",
+          "geosite-gfw"
+        ],
         "outbound": "🌏 !cn"
       },
       {
@@ -398,7 +515,13 @@
         "outbound": "🇨🇳 cn"
       },
       {
-        "domain": ["alidns.com", "doh.pub", "dot.pub", "360.cn", "onedns.net"],
+        "domain": [
+          "alidns.com",
+          "doh.pub",
+          "dot.pub",
+          "360.cn",
+          "onedns.net"
+        ],
         "outbound": "🇨🇳 cn"
       },
       {
@@ -442,21 +565,38 @@
         "outbound": "🇨🇳 cn"
       },
       {
-        "port": [3478, 5348, 5349],
+        "port": [
+          3478,
+          5348,
+          5349
+        ],
         "outbound": "direct"
       },
       {
         "network": "udp",
         "action": "reject",
-        "port": [135, 137, 138, 139, 443, 5353]
+        "port": [
+          135,
+          137,
+          138,
+          139,
+          443,
+          5353
+        ]
       },
       {
-        "ip_cidr": ["224.0.0.0/3", "ff00::/8"],
+        "ip_cidr": [
+          "224.0.0.0/3",
+          "ff00::/8"
+        ],
         "action": "reject"
       },
       {
         "action": "reject",
-        "source_ip_cidr": ["224.0.0.0/3", "ff00::/8"]
+        "source_ip_cidr": [
+          "224.0.0.0/3",
+          "ff00::/8"
+        ]
       }
     ],
     "rule_set": [
@@ -495,6 +635,18 @@
         "type": "remote",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs"
+      },
+      {
+        "tag": "geosite-google-gemini",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/google-gemini.srs"
+      },
+      {
+        "tag": "geosite-anthropic",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/anthropic.srs"
       },
       {
         "tag": "geosite-github",
@@ -639,12 +791,6 @@
         "type": "remote",
         "format": "binary",
         "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bilibili.srs"
-      },
-      {
-        "tag": "geosite-amazon",
-        "type": "remote",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/amazon.srs"
       },
       {
         "tag": "geoip-cn",

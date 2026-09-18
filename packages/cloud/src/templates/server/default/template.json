@@ -14,14 +14,14 @@
     ],
     "rules": [
       {
-        "rule_set": "geosite-cn",
-        "server": "google",
-        "rewrite_ttl": 100
-      },
-      {
         "rule_set": "geosite-category-ads-all",
         "action": "predefined",
         "rcode": "NOERROR"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "server": "google",
+        "rewrite_ttl": 100
       }
     ],
     "final": "google",
@@ -42,6 +42,7 @@
     }
   ],
   "route": {
+    "default_domain_resolver": "google",
     "rules": [
       {
         "action": "sniff"
