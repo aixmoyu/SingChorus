@@ -55,6 +55,83 @@ VITE_ALLOWED_HOSTS=oxd.imuuu.eu.org
 
 注意：此限制仅存在于 Vite dev server。生产部署用 `npx @chorus/panel start`（Express 托管预编译 `dist-web`），任意域名均可访问，无需任何配置。
 
+## Docker 部署（VPS 推荐）
+
+panel 镜像基于 `node:22-alpine`，内置 `docker` CLI + compose 插件。容器通过挂载宿主
+`/var/run/docker.sock` 驱动宿主 Docker 来部署 sing-box（DooD 模式，非 DinD，
+无需 `privileged`），sing-box 本身不在 panel 镜像里。
+
+### 方式一：GHCR 预构建镜像
+
+CI 在推送 `panel-v*` tag 时自动发布多架构镜像（`linux/amd64` + `linux/arm64`）到
+`ghcr.io/aixmoyu/chorus-panel`：
+
+```bash
+cd packages/panel
+PANEL_IMAGE=ghcr.io/aixmoyu/chorus-panel:latest docker compose up -d
+```
+
+镜像 tag：`panel-v0.2.0` → `{0.2.0, 0.2, latest}`；main 分支自动产出 `edge`。
+升级：`docker compose pull && docker compose up -d`。
+
+### 方式二：本地构建
+
+```bash
+cd packages/panel
+docker compose up -d --build
+```
+
+### 非 root 用户 / 自定义数据目录
+
+panel 与 sing-box 共享宿主的 `~/.singchorus` 数据目录，容器内路径必须与宿主
+**完全一致**（sing-box 的相对卷由宿主 daemon 解析）。用 `SINGCHORUS_HOME` 同时
+控制两侧（默认 `/root`，root 部署的 VPS 开箱即用）：
+
+```bash
+SINGCHORUS_HOME=/home/admin PANEL_IMAGE=ghcr.io/aixmoyu/chorus-panel:latest docker compose up -d
+```
+
+### 首次使用
+
+浏览器打开 `http://<host>:8088`，完成初始化向导：设置管理员密码 → 节点名称 →
+cloud 连接。若 cloud 也以 Docker 跑在同一台机器上，core_url 填
+`http://host.docker.internal:8787`（compose 已配好 `host-gateway`）。
+
+### 配置
+
+compose 变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PANEL_IMAGE` | `chorus-panel:latest` | 镜像；设为 GHCR 地址则跳过本地构建 |
+| `PANEL_PORT` | `8088` | 宿主侧端口 |
+| `SINGCHORUS_HOME` | `/root` | 数据目录（宿主与容器内同路径） |
+
+容器环境变量（在 `docker-compose.yml` 的 `environment` 里按需取消注释）：
+
+| 变量 | 说明 |
+|------|------|
+| `CHORUS_PANEL_CORS_ORIGIN` | 跨域访问面板 API 的允许来源（逗号分隔） |
+| `CHORUS_PANEL_TRUST_PROXY` | 反代（Nginx/Caddy 终结 TLS）后设为 `true`，登录限流才能拿到真实 IP |
+| `CHORUS_LOG_LEVEL` | 日志级别（默认 `info`），JSON 一行一条输出，`docker logs` 查看 |
+
+### 安全提示与 sing-box 版本管理
+
+- 挂载 docker.sock 等价于授予 panel 宿主 root 权限：务必完成初始化向导设置强密码，
+  生产建议在前面挂反代做 TLS。
+- sing-box 版本不受 panel 镜像约束——image tag（默认 `ghcr.io/sagernet/sing-box:latest`）
+  存在 cloud 的 `docker-default` 模板里，升级/回滚 = 在 cloud 改模板 → 重新部署。
+  建议把 `latest` 固化为具体版本号（如 `1.12.4`）。
+
+### 同机全 Docker 部署（panel + cloud）
+
+```bash
+# cloud
+cd packages/cloud && docker compose up -d
+# panel（core_url 填 http://host.docker.internal:8787）
+cd ../panel && docker compose up -d
+```
+
 ## Architecture
 
 The panel server runs on port 8088 and serves:

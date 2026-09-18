@@ -5,7 +5,8 @@ services:
     build:
       context: ../..
       dockerfile: packages/cloud/Dockerfile
-    image: chorus-cloud:latest
+    # 默认本地构建；用 GHCR 发布镜像时：CLOUD_IMAGE=ghcr.io/<owner>/chorus-cloud:latest docker compose up -d
+    image: ${CLOUD_IMAGE:-chorus-cloud:latest}
     ports:
       - '8787:8787'
     volumes:

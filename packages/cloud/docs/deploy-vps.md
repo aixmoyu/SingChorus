@@ -19,9 +19,19 @@ chorus-cloud 是**同一份业务代码、两个运行时入口**：
 
 ```bash
 cd packages/cloud
+
+# 用 CI 发布的 GHCR 预构建镜像（多架构 amd64/arm64）
+CLOUD_IMAGE=ghcr.io/aixmoyu/chorus-cloud:latest docker compose up -d
+
+# 或本地构建
 docker compose up -d --build
+
 curl http://localhost:8787/health   # {"status":"ok","service":"chorus-cloud"}
 ```
+
+镜像 tag：推送 `cloud-v0.1.0` tag 后 CI 自动发布 `{0.1.0, 0.1, latest}`；main 分支
+自动产出 `edge`。升级：`docker compose pull && docker compose up -d`。
+（GHCR 包首次发布后需在 GitHub Packages 页面设为 Public，否则拉取要先 `docker login ghcr.io`。）
 
 数据（SQLite + secrets.json）都在 `cloud-data` 卷里，备份即备份该卷：
 

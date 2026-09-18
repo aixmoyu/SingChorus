@@ -45,6 +45,7 @@ pnpm dev:cloud    # cloud：wrangler dev (8787)
 | --- | --- | --- |
 | Cloudflare | `packages/cloud` 一键部署按钮 / `pnpm setup:prod` | [packages/cloud/docs/deploy.md](packages/cloud/docs/deploy.md) |
 | 自托管 VPS / 本地 | 同一份代码的 Node 入口（SQLite 存储，Docker 或裸机） | [packages/cloud/docs/deploy-vps.md](packages/cloud/docs/deploy-vps.md) |
+| Web 管理面板 | Docker（GHCR 镜像 / 本地构建，驱动宿主 Docker 部署 sing-box） | [packages/panel/README.md](packages/panel/README.md#docker-部署vps-推荐) |
 
 ## 发布到 npm
 

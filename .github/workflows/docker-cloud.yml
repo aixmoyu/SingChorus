@@ -1,28 +1,26 @@
-name: Publish panel image
+name: Publish cloud image
 
-# 发布 chorus-panel 镜像到 GHCR：
-#   - tag panel-v0.2.0  → ghcr.io/<owner>/chorus-panel:{0.2.0, 0.2, latest}
-#   - main 分支相关改动  → ghcr.io/<owner>/chorus-panel:edge（持续通道）
+# 发布 chorus-cloud 镜像到 GHCR：
+#   - tag cloud-v0.1.0  → ghcr.io/<owner>/chorus-cloud:{0.1.0, 0.1, latest}
+#   - main 分支相关改动  → ghcr.io/<owner>/chorus-cloud:edge（持续通道）
 #   - 手动 workflow_dispatch → 同上按当前 ref 打标
 on:
   push:
     branches: [main]
-    tags: ['panel-v*']
+    tags: ['cloud-v*']
     paths:
-      - 'packages/panel/**'
-      - 'packages/core/**'
-      - '.github/workflows/docker-panel.yml'
+      - 'packages/cloud/**'
+      - '.github/workflows/docker-cloud.yml'
   # PR 只做构建校验（不登录、不推送），在合并前抓 Dockerfile/依赖破坏
   pull_request:
     paths:
-      - 'packages/panel/**'
-      - 'packages/core/**'
-      - '.github/workflows/docker-panel.yml'
+      - 'packages/cloud/**'
+      - '.github/workflows/docker-cloud.yml'
   workflow_dispatch:
 
 # 同一 ref 的重复触发只保留最新一次，避免并行推送互相覆盖
 concurrency:
-  group: panel-image-${{ github.ref }}
+  group: cloud-image-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -48,12 +46,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/chorus-panel
+          images: ghcr.io/${{ github.repository_owner }}/chorus-cloud
           tags: |
-            # panel-v0.2.0 → 0.2.0 / 0.2 / latest
-            type=match,pattern=panel-v(\d+\.\d+\.\d+),group=1
-            type=match,pattern=panel-v(\d+\.\d+)\.\d+,group=1
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/panel-v') }}
+            # cloud-v0.1.0 → 0.1.0 / 0.1 / latest
+            type=match,pattern=cloud-v(\d+\.\d+\.\d+),group=1
+            type=match,pattern=cloud-v(\d+\.\d+)\.\d+,group=1
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/cloud-v') }}
             # main 分支持续通道
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha
@@ -62,11 +60,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: . # 仓库根目录（Dockerfile 依赖 monorepo workspace）
-          file: packages/panel/Dockerfile
+          file: packages/cloud/Dockerfile
           # PR 校验只跑单架构，推送时才出双架构镜像
           platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=chorus-panel
-          cache-to: type=gha,mode=max,scope=chorus-panel
+          cache-from: type=gha,scope=chorus-cloud
+          cache-to: type=gha,mode=max,scope=chorus-cloud

@@ -36,6 +36,7 @@ pnpm deploy       # 日常发版：迁移 + 重新部署
 
 ```bash
 pnpm build:node && pnpm start:node   # 或 cd packages/cloud && docker compose up -d --build
+# 也可直接用 CI 发布的镜像：CLOUD_IMAGE=ghcr.io/aixmoyu/chorus-cloud:latest docker compose up -d
 ```
 
 完整说明（含 Docker、systemd、从 Cloudflare 迁移数据）见 [docs/deploy-vps.md](./docs/deploy-vps.md)。
