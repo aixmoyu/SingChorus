@@ -1,0 +1,42 @@
+# chorus-panel 自托管 compose（方案 A：panel 独立镜像 + 宿主 docker.sock）。
+#
+# 原理：panel 容器内只有 docker CLI，通过挂载的宿主 sock 驱动 sing-box 容器
+# （DooD，不是 DinD，无需 privileged）。sing-box 的 compose 由 cloud 渲染，
+# 使用 ./data、./tls 相对卷——CLI 在 panel 容器侧转成绝对路径
+# （$HOME/.singchorus/docker/...）后由宿主 daemon 解析。
+#
+# 关键约束：容器内 $HOME/.singchorus 的绝对路径必须与宿主完全一致，
+# 否则 sing-box 挂卷会指向宿主上不存在的路径。用 SINGCHORUS_HOME 同时控制
+# 两侧路径（默认 /root，即 root 部署的 VPS 开箱即用）：
+#   SINGCHORUS_HOME=/home/admin docker compose up -d --build
+#
+# 安全提示：挂载 docker.sock 等价于给 panel 宿主 root 权限，请务必完成
+# 初始化向导设置管理员密码，并按需配置 CORS / 反向代理。
+services:
+  panel:
+    build:
+      context: ../.. # 仓库根目录（Dockerfile 依赖 monorepo workspace）
+      dockerfile: packages/panel/Dockerfile
+    # 默认本地构建；用 GHCR 发布镜像时：PANEL_IMAGE=ghcr.io/<owner>/chorus-panel:latest docker compose up -d
+    image: ${PANEL_IMAGE:-chorus-panel:latest}
+    container_name: chorus-panel
+    restart: unless-stopped
+    ports:
+      - "${PANEL_PORT:-8088}:8088"
+    environment:
+      CHORUS_PANEL_HOST: 0.0.0.0
+      HOME: ${SINGCHORUS_HOME:-/root}
+      # 生产部署建议按需开启（见 server/env.ts）：
+      # 跨域访问面板 API 时的允许来源（逗号分隔）
+      # CHORUS_PANEL_CORS_ORIGIN: https://panel.example.com
+      # 反向代理（Nginx/Caddy 终结 TLS）后必须设置，登录限流才能拿到真实 IP
+      # CHORUS_PANEL_TRUST_PROXY: "true"
+      # 日志级别（默认 info）
+      # CHORUS_LOG_LEVEL: debug
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${SINGCHORUS_HOME:-/root}/.singchorus:${SINGCHORUS_HOME:-/root}/.singchorus
+    # 若 cloud 就跑在宿主 localhost 上，容器里用 http://host.docker.internal:8787
+    # 作为 core_url（初始化向导里填）；linux 下靠下面这行打通
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
