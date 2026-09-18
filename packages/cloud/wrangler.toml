@@ -3,14 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2026-06-11"
 compatibility_flags = ["nodejs_compat"]
 
-# 本地开发配置：wrangler dev 会用 .wrangler/state/ 下的本地模拟 D1/KV，
+# 本地开发配置：wrangler dev 会用 .wrangler/state/ 下的本地模拟 D1，
 # 下面的占位 ID 仅供本地模式作为存储键使用，不需要是真实资源 ID。
 # 生产环境的真实 ID 由 scripts/setup-prod.mjs 生成的 wrangler.prod.toml 提供。
 
-# KV Namespace for client config cache
-kv_namespaces = [
-  { binding = "CLIENT_CONFIGS", id = "00000000-0000-0000-0000-000000000000", preview_id = "00000000-0000-0000-0000-000000000001" }
-]
+# 客户端配置等数据全部在 D1。
 
 # D1 Database for metadata
 [[d1_databases]]
@@ -32,6 +29,8 @@ LOG_LEVEL = "info"
 # 本地 wrangler dev / vitest 会用 .dev.vars 里的同名值覆盖；生产配置由
 # scripts/setup-prod.mjs 独立生成（不含此 var），真实密钥走 wrangler secret。
 AUTH_TOKEN = "dev-admin-token-change-in-production"
+# 同上：JWT 签名密钥的非机密占位值（CI 没有 .dev.vars，缺失会导致 JWT 签发/校验失败）。
+JWT_SECRET = "dev-jwt-secret-change-in-production"
 
 # Workers Logs：控制台自动收集/索引/查询所有 console.* 输出。
 # 免费版 200k 条/天、保留 3 天；历史问题可回查，无需实时 wrangler tail。

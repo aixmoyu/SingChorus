@@ -333,8 +333,8 @@ export class CloudClient {
   async getClients(): Promise<Record<string, unknown>[]> {
     const resp = await this.request({ method: 'GET', path: '/api/clients' });
     if (resp.status >= 400) {
-      // Distinguish "cloud has no clients" from "cloud unavailable" (e.g. KV
-      // quota exhaustion → 503). Callers reconcile against this list; an
+      // Distinguish "cloud has no clients" from "cloud unavailable" (e.g. D1
+      // outage → 503). Callers reconcile against this list; an
       // empty list on failure would trigger mass re-uploads.
       throw new Error(`cloud client list failed with status ${resp.status}`);
     }

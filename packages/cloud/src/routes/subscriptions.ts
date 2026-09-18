@@ -12,52 +12,49 @@ import type { Logger } from '../logger';
 const subscriptions = new Hono<{ Bindings: Env }>();
 
 /**
- * Isolate-level cache for the KV client-config fallback. Subscription
+ * Isolate-level cache for the client-configs fallback. Subscription
  * consumers poll this endpoint regularly; without a cache every poll costs
- * one KV list + reads, and KV list has a strict 1,000/day free-tier quota.
- * A 300s TTL caps it at ~288/day worst-case per live isolate (CLOUD-P3) —
+ * one D1 query (cheap but not free on the subrequest budget). A 300s TTL
+ * caps it at ~288 queries/day worst-case per live isolate (CLOUD-P3) —
  * aligned with the 5-minute panel full-sync cadence, so configs are already
  * expected to change at that granularity. Hot polls within the TTL are
- * served from memory at zero cost; on KV failure a stale cache is served
+ * served from memory at zero cost; on D1 failure a stale cache is served
  * rather than erroring.
  */
-const KV_CONFIGS_TTL_MS = 300_000;
-let kvConfigsCache: { at: number; configs: ProtocolInstanceConfig[] } | null = null;
+const CONFIGS_TTL_MS = 300_000;
+let configsCache: { at: number; configs: ProtocolInstanceConfig[] } | null = null;
 
 /** Test-only: drop the isolate cache (D1 storage resets per test but module
  * state persists in the single test worker). */
-export function resetSubscriptionKvCache(): void {
-  kvConfigsCache = null;
+export function resetSubscriptionCaches(): void {
+  configsCache = null;
   subCacheWriteAt.clear();
 }
 
 /**
- * CLOUD-A2: KV cache of the last successful delivery, keyed `subcache:{path}`.
- * Subscription delivery hard-depends on D1 (subscription row lookup, instance
- * read, template load) — without this cache a D1 outage takes the delivery
- * plane down with the admin plane. On D1 failure the cached config is served
- * stale instead, keeping end-user clients provisioning.
+ * CLOUD-A2: D1-backed delivery cache (table `sub_delivery_cache`).
+ * Subscription delivery hard-depends on D1 (subscription row lookup,
+ * instance read, template load) — without this cache a D1 outage takes the
+ * delivery plane down with the admin plane. On D1 failure the cached config
+ * is served stale instead, keeping end-user clients provisioning.
  *
  * Security posture: only the SHA-256 token hash is stored (not the token),
  * so a rotated token is rejected; a subscription disabled while D1 was
  * healthy has its cache entry invalidated on the 403 path. Staleness is
- * bounded by the 24h KV TTL.
+ * bounded by the 24h lazy purge on write.
  */
-const SUB_CACHE_TTL = 24 * 60 * 60;
+const SUB_CACHE_TTL_DAYS = 1;
 /**
  * Delivery results are written at most once per 5min per path per isolate —
- * identical rationale to KV_CONFIGS_TTL_MS: KV writes have their own free-tier
- * quota (1,000/day) and polling consumers would otherwise burn it.
+ * identical rationale to CONFIGS_TTL_MS: keeps write volume (and row
+ * churn) negligible for polling consumers.
  */
 const SUB_CACHE_WRITE_INTERVAL_MS = 300_000;
 const subCacheWriteAt = new Map<string, number>();
 
-function subCacheKey(path: string): string {
-  return `subcache:${path}`;
-}
-
 /** Best-effort cache write; failures are logged and swallowed — caching must
- * never break a successful delivery. */
+ * never break a successful delivery. Also lazily purges entries older than
+ * the 24h staleness bound. */
 async function writeDeliveryCache(
   env: Env, logger: Logger, path: string, token: string, active: boolean, config: unknown,
 ): Promise<void> {
@@ -65,11 +62,20 @@ async function writeDeliveryCache(
   if (Date.now() - last < SUB_CACHE_WRITE_INTERVAL_MS) return;
   subCacheWriteAt.set(path, Date.now());
   try {
-    await env.CLIENT_CONFIGS.put(subCacheKey(path), JSON.stringify({
-      tokenHash: await hashToken(token),
-      active,
-      config,
-    }), { expirationTtl: SUB_CACHE_TTL });
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO sub_delivery_cache (path, token_hash, active, config, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(path) DO UPDATE SET
+           token_hash = excluded.token_hash,
+           active = excluded.active,
+           config = excluded.config,
+           updated_at = excluded.updated_at`,
+      ).bind(path, await hashToken(token), active ? 1 : 0, JSON.stringify(config)),
+      env.DB.prepare(
+        `DELETE FROM sub_delivery_cache WHERE updated_at < datetime('now', '-${SUB_CACHE_TTL_DAYS} day')`,
+      ),
+    ]);
   } catch (e) {
     logger.warn('subscription delivery: cache write failed', { err: e });
   }
@@ -81,12 +87,12 @@ async function serveStaleDelivery(
   c: Context<{ Bindings: Env }>, path: string, token: string,
 ): Promise<Response | null> {
   try {
-    const raw = await c.env.CLIENT_CONFIGS.get(subCacheKey(path));
-    if (!raw) return null;
-    const entry = JSON.parse(raw) as { tokenHash?: string; active?: boolean; config?: unknown };
-    if (!entry.config || !entry.active) return null;
-    if (!entry.tokenHash || entry.tokenHash !== await hashToken(token)) return null;
-    return c.json(entry.config as Record<string, unknown>, 200, { 'X-Subscription-Cache': 'stale' });
+    const row = await c.env.DB.prepare(
+      'SELECT token_hash, active, config FROM sub_delivery_cache WHERE path = ?',
+    ).bind(path).first<{ token_hash: string; active: number; config: string }>();
+    if (!row || !row.config || !row.active) return null;
+    if (!row.token_hash || row.token_hash !== await hashToken(token)) return null;
+    return c.json(JSON.parse(row.config), 200, { 'X-Subscription-Cache': 'stale' });
   } catch (e) {
     c.get('logger').warn('subscription delivery: stale cache fallback failed', { err: e });
     return null;
@@ -95,45 +101,39 @@ async function serveStaleDelivery(
 
 /**
  * Only deployed+enabled configs belong in a user subscription: nodes that the
- * owner actually runs. Undeployed/disabled configs are still synced to KV
- * (for management/visibility) but their metadata excludes them here — only
- * visible entries cost a KV read.
+ * owner actually runs. Undeployed/disabled configs are still synced (for
+ * management/visibility) but excluded here. One indexed query.
  */
-async function loadConfigsFromKv(env: Env, logger: Logger): Promise<ProtocolInstanceConfig[]> {
-  if (kvConfigsCache && Date.now() - kvConfigsCache.at < KV_CONFIGS_TTL_MS) {
-    return kvConfigsCache.configs;
+async function loadConfigsFromD1(env: Env, logger: Logger): Promise<ProtocolInstanceConfig[]> {
+  if (configsCache && Date.now() - configsCache.at < CONFIGS_TTL_MS) {
+    return configsCache.configs;
   }
   try {
-    const { keys } = await env.CLIENT_CONFIGS.list({ prefix: 'client:' });
-    const visible = keys
-      .filter((k) => k.name.split(':').length >= 3)
-      .filter((k) => {
-        const meta = k.metadata as { enabled?: boolean; deployed?: boolean } | undefined;
-        return Boolean(meta?.deployed) && (meta?.enabled ?? true);
-      })
-      .slice(0, 40);
-    const values = await Promise.all(visible.map((k) => env.CLIENT_CONFIGS.get(k.name)));
+    const { results } = await env.DB.prepare(
+      `SELECT name, config FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
+    ).all<{ name: string; config: string }>();
     const configs: ProtocolInstanceConfig[] = [];
-    for (const val of values) {
-      if (!val) continue;
-      const parsed = JSON.parse(val);
-      if (parsed.config) {
-        configs.push({
-          id: parsed.name || 'client',
-          serverConfig: {},
-          clientConfig: parsed.config,
-        });
-      }
+    for (const row of results ?? []) {
+      try {
+        const parsed = JSON.parse(row.config);
+        if (parsed && typeof parsed === 'object') {
+          configs.push({
+            id: row.name || 'client',
+            serverConfig: {},
+            clientConfig: parsed,
+          });
+        }
+      } catch { /* malformed row — skip */ }
     }
-    kvConfigsCache = { at: Date.now(), configs };
+    configsCache = { at: Date.now(), configs };
     return configs;
   } catch (e) {
-    // KV unavailable (e.g. free-tier daily list quota exhausted) — serve the
-    // stale cache if we have one; the config content rarely changes and a
-    // brief staleness beats an outage for polling consumers.
-    if (kvConfigsCache) {
-      logger.warn('subscription delivery: KV fallback failed, serving stale cache', { err: e });
-      return kvConfigsCache.configs;
+    // D1 unavailable — serve the stale cache if we have one; the config
+    // content rarely changes and a brief staleness beats an outage for
+    // polling consumers.
+    if (configsCache) {
+      logger.warn('subscription delivery: client-configs fallback failed, serving stale cache', { err: e });
+      return configsCache.configs;
     }
     throw e;
   }
@@ -154,9 +154,9 @@ subscriptions.get('/s/:path', async (c) => {
       'SELECT * FROM subscriptions WHERE path = ?'
     ).bind(path).first<SubscriptionRow | null>();
   } catch (e) {
-    // CLOUD-A2: D1 outage — serve the last delivered config from KV instead
-    // of going down. Rate limiting is skipped here (no sub id available);
-    // acceptable for an emergency stale path.
+    // CLOUD-A2: D1 outage — serve the last delivered config from the
+    // sub_delivery_cache table instead of going down. Rate limiting is
+    // skipped here (no sub id available); acceptable for an emergency stale path.
     c.get('logger').error('subscription delivery: subscription row lookup failed', { err: e });
     return (await serveStaleDelivery(c, path, token))
       ?? c.json({ error: { code: 'DB_UNAVAILABLE', message: 'Database temporarily unavailable' } }, 503);
@@ -176,7 +176,8 @@ subscriptions.get('/s/:path', async (c) => {
     // Invalidate any cached delivery so the stale path can't serve a config
     // for a subscription that was just disabled (best-effort).
     // Works on both runtimes: waitUntil on Workers, detached promise on Node.
-    fireAndForget(c, c.env.CLIENT_CONFIGS.delete(subCacheKey(path)).catch(() => {}));
+    fireAndForget(c, c.env.DB.prepare('DELETE FROM sub_delivery_cache WHERE path = ?')
+      .bind(path).run().catch(() => {}));
     return c.json({ error: { code: 'SUB_INACTIVE', message: 'Subscription is disabled' } }, 403);
   }
 
@@ -191,7 +192,7 @@ subscriptions.get('/s/:path', async (c) => {
     return c.json({ error: { code: 'RATE_LIMITED', message: 'Too many requests' } }, 429);
   }
 
-  // Try D1 protocol_instances first, fall back to KV client configs (from panel sync)
+  // Try D1 protocol_instances first, fall back to synced client configs (panel push)
   let configs: ProtocolInstanceConfig[];
   try {
     const { results: instanceRows } = await c.env.DB.prepare(
@@ -205,13 +206,13 @@ subscriptions.get('/s/:path', async (c) => {
         clientConfig: row.client_config ? JSON.parse(row.client_config) : {},
       }));
     } else {
-      // Fallback: read from KV client configs (synced from local core), cached
-      // at isolate level to conserve the KV list quota.
+      // Fallback: read D1 client configs (synced from local panels), cached
+      // at isolate level to conserve the request budget.
       try {
-        configs = await loadConfigsFromKv(c.env, c.get('logger'));
+        configs = await loadConfigsFromD1(c.env, c.get('logger'));
       } catch (e) {
-        c.get('logger').error('subscription delivery: KV fallback failed', { err: e });
-        return c.json({ error: { code: 'KV_UNAVAILABLE', message: 'Config storage temporarily unavailable' } }, 503);
+        c.get('logger').error('subscription delivery: client-configs fallback failed', { err: e });
+        return c.json({ error: { code: 'STORAGE_UNAVAILABLE', message: 'Config storage temporarily unavailable' } }, 503);
       }
       if (configs.length === 0) {
         return c.json({ error: { code: 'INSTANCES_MISSING', message: 'No active protocol instances found' } }, 500);
@@ -231,7 +232,7 @@ subscriptions.get('/s/:path', async (c) => {
     await reg.loadAll();
 
     if (sub.overallTemplateId && configs.length > 0) {
-      // Render via overall template (works with both D1 instances and KV-synced configs)
+      // Render via overall template (works with both D1 instances and synced client configs)
       const overallParams = sub.overallParams ? JSON.parse(sub.overallParams) : {};
       clientConfig = await reg.renderClientOverall(configs, sub.overallTemplateId, overallParams);
     } else {

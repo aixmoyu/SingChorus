@@ -1,6 +1,5 @@
-import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { initializeDatabase, resetDatabaseInitCache } from '../src/db/schema';
+import { resetDatabaseInitCache } from '../src/db/schema';
 import { resetRegistryCache } from '../src/engine/registry';
 import { adminHeaders, api, createInstance, createNode, createSimpleProtocol, jsonBody } from './helpers';
 
@@ -48,31 +47,7 @@ describe('GET /api/tags/check', () => {
     expect(body.source).toBe('protocol_instances');
   });
 
-  it('self-heals legacy instance rows (tag column empty) via the LIKE probe', async () => {
-    // Direct D1 access bypasses the app middleware, so initialize the schema
-    // explicitly (beforeEach only dropped the init memo).
-    await initializeDatabase((env as any).DB);
-    // Simulate a pre-migration-0010 row: params hold the tag, the indexed
-    // column is empty. FKs require real parent rows.
-    await createSimpleProtocol('legacy-proto');
-    const node = await createNode();
-    await (env as any).DB.prepare(
-      "INSERT INTO protocol_instances (id, protocol_id, node_id, params, server_config, client_config, status, tag) VALUES (?, 'legacy-proto', ?, ?, '{}', '{}', 'active', '')",
-    ).bind('legacy-inst', node.id, JSON.stringify({ tag: 'legacy-tag' })).run();
-
-    const { status, body } = await checkTag('legacy-tag');
-    expect(status).toBe(200);
-    expect(body.available).toBe(false);
-    expect(body.source).toBe('protocol_instances');
-
-    // The probe backfills the indexed column so the LIKE scan converges to zero.
-    const row = await (env as any).DB.prepare('SELECT tag FROM protocol_instances WHERE id = ?')
-      .bind('legacy-inst')
-      .first() as { tag: string } | null;
-    expect(row?.tag).toBe('legacy-tag');
-  });
-
-  it('detects tags via the O(1) KV index written on client upload', async () => {
+  it('detects tags claimed by synced client configs', async () => {
     const res = await api('/api/clients/fp-tag/conf-a', {
       method: 'PUT',
       headers: await adminHeaders(),
@@ -83,34 +58,21 @@ describe('GET /api/tags/check', () => {
     const { status, body } = await checkTag('kv-tag');
     expect(status).toBe(200);
     expect(body.available).toBe(false);
-    expect(body.source).toBe('kv_client_configs');
+    expect(body.source).toBe('client_configs');
   });
 
-  it('falls back to scanning legacy KV client records and backfills the index', async () => {
-    // Legacy-format record written before the index existed.
-    await (env as any).CLIENT_CONFIGS.put(
-      'client:legacyfp:legacy-name',
-      JSON.stringify({ name: 'legacy-name', fingerprint: 'legacyfp', config: { tag: 'kv-legacy-tag' } }),
-    );
+  it('reports availability again after the claiming client config is deleted', async () => {
+    await api('/api/clients/fp-tag/conf-b', {
+      method: 'PUT',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ config: { tag: 'releasable-tag' }, protocol_type: 'vless' }),
+    });
+    expect((await checkTag('releasable-tag')).body.available).toBe(false);
 
-    const { status, body } = await checkTag('kv-legacy-tag');
-    expect(status).toBe(200);
-    expect(body.available).toBe(false);
-    expect(body.source).toBe('kv_client_configs');
-
-    // The fallback scan self-heals the O(1) index.
-    expect(await (env as any).CLIENT_CONFIGS.get('tag:kv-legacy-tag')).toBe('legacyfp:legacy-name');
-  });
-
-  it('treats legacy single-segment KV keys as non-scannable', async () => {
-    // Pre-fingerprint keys (`client:{name}`) are skipped by the scan filter.
-    await (env as any).CLIENT_CONFIGS.put(
-      'client:oldstyle',
-      JSON.stringify({ config: { tag: 'single-segment-tag' } }),
-    );
-
-    const { status, body } = await checkTag('single-segment-tag');
-    expect(status).toBe(200);
-    expect(body.available).toBe(true);
+    await api('/api/clients/fp-tag/conf-b', {
+      method: 'DELETE',
+      headers: await adminHeaders(),
+    });
+    expect((await checkTag('releasable-tag')).body.available).toBe(true);
   });
 });

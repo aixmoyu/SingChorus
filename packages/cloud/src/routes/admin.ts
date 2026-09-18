@@ -64,7 +64,7 @@ admin.post('/seed', async (c) => {
     }
   }
 
-  // Unified templates (migration 0008): single table, category distinguishes type
+  // Unified templates: single table, category distinguishes type
   // IDs match seedIfEmpty() in db/seed.ts for consistency
   const templates = [
     {

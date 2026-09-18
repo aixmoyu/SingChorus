@@ -34,8 +34,3 @@ registerGenerator('random_port', () => randomPort());
 registerGenerator('random_port_high', (min: string = '30000') => randomPortHigh(min));
 registerGenerator('now_iso', () => nowIso());
 registerGenerator('random_tag', (prefix: string = 'node') => randomTag(prefix));
-
-// Backward-compat accessor: `generators.NAME(...args)` forwards to the registry.
-export const generators = new Proxy({} as Record<string, GeneratorFn>, {
-  get: (_target, prop: string) => registry.get(prop),
-});

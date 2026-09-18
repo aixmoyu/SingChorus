@@ -180,7 +180,7 @@ export class ChorusCore {
     }
     for (const c of cloudClients) {
       // Only own configs count for push-reconciliation; other nodes' entries
-      // live under different KV keys.
+      // are keyed by their own fingerprint.
       const owner = String(c.fingerprint ?? '');
       if (owner && owner !== identity.fingerprint) continue;
       const name = c.name as string | undefined;
@@ -216,7 +216,7 @@ export class ChorusCore {
 
     // 3. Reconcile deletes: cloud entries with no local counterpart are stale —
     //    removed locally and never pushed back, so the subscription endpoint
-    //    (which reads all KV client configs) stops serving them.
+    //    (which reads all client configs) stops serving them.
     const localNames = new Set(this.configs.listAll().map((e) => e.name));
     for (const name of Array.from(cloudMap.keys())) {
       if (localNames.has(name)) continue;

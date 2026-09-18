@@ -75,7 +75,7 @@ app.route('/api/tags', tags);
 // Unified error exit: PluginError (engine validation/rendering) maps to 400;
 // anything unexpected is logged with route context and returned as 500. The
 // error message IS included in the response — this is an admin-facing API and
-// actionable detail (e.g. KV "free usage limit" errors) beats opaqueness.
+// actionable detail (e.g. D1 error messages) beats opaqueness.
 // Stack traces are never returned.
 app.onError((err, c) => {
   const logger = c.get('logger') ?? createLogger(c.env?.LOG_LEVEL, {});

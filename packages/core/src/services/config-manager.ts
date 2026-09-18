@@ -61,7 +61,7 @@ export class ConfigManager {
         merged.params,
       );
       // 内容真变更才失效同步/部署状态：键序不同但内容相同（hash 一致）的写入
-      // 不应触发冗余重传（KV 写额度）与订阅下线。
+      // 不应触发冗余重传与订阅下线。
       if (nextHash !== existing.content_hash) {
         merged.synced = false;
         // 内容已变，线上运行的实例与本条目不再一致：从订阅中隐藏直至重新部署。

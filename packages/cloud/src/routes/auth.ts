@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { signJWT, verifyJWT, hashToken, TOKEN_TTL, resolveJwtSecret } from '../auth/jwt';
+import { signJWT, verifyJWT, hashToken, TOKEN_TTL } from '../auth/jwt';
 import { adminAuth } from '../auth/middleware';
 import { logAction } from '../services/audit';
 
@@ -24,7 +24,7 @@ auth.post('/login', async (c) => {
 
   const { token, jti, exp } = await signJWT(
     { sub: 'admin', type: 'admin', ttl: TOKEN_TTL.ADMIN },
-    resolveJwtSecret(c.env),
+    c.env.JWT_SECRET,
   );
 
   // Record token in tokens table for revocation
@@ -58,7 +58,7 @@ auth.post('/refresh', adminAuth, async (c) => {
   // Issue new token
   const { token, jti, exp } = await signJWT(
     { sub: authCtx.actor, type: authCtx.tokenType, ttl: TOKEN_TTL.ADMIN },
-    resolveJwtSecret(c.env),
+    c.env.JWT_SECRET,
   );
 
   const tokenHash = await hashToken(token);

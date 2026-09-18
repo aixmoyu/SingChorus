@@ -2,16 +2,7 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { initializeDatabase } from '../src/db/schema';
 
-import m0001 from '../migrations/0001_create_tables.sql?raw';
-import m0002 from '../migrations/0002_add_role_columns.sql?raw';
-import m0003 from '../migrations/0003_drop_clients_table.sql?raw';
-import m0004 from '../migrations/0004_add_node_overall_columns.sql?raw';
-import m0005 from '../migrations/0005_create_subscriptions.sql?raw';
-import m0006 from '../migrations/0006_drop_users_table.sql?raw';
-import m0007 from '../migrations/0007_create_auth_tables.sql?raw';
-import m0008 from '../migrations/0008_unify_templates.sql?raw';
-import m0009 from '../migrations/0009_add_node_fingerprint.sql?raw';
-import m0010 from '../migrations/0010_add_instance_tag.sql?raw';
+import m0001 from '../migrations/0001_init.sql?raw';
 
 /**
  * CLOUD-C3 guard: migrations/ (wrangler d1 migrations apply) and the runtime
@@ -23,7 +14,7 @@ import m0010 from '../migrations/0010_add_instance_tag.sql?raw';
  * normalized away because ALTER TABLE ADD COLUMN appends).
  */
 
-const MIGRATIONS = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010];
+const MIGRATIONS = [m0001];
 
 // FK-dependency order so drops never fail on enforcement differences.
 const DROP_ORDER = [
@@ -34,9 +25,8 @@ const DROP_ORDER = [
   'users',
   'templates',
   'nodes',
-  'clients',
-  'protocols',
-  'overall_templates',
+  'client_configs',
+  'sub_delivery_cache',
 ];
 
 function normSql(sql: string): string {
@@ -94,8 +84,8 @@ async function applyMigrations(db: D1Database): Promise<void> {
       try {
         await db.prepare(stmt).run();
       } catch {
-        // Idempotent statements (CREATE TABLE IF NOT EXISTS on legacy shapes)
-        // may no-op-fail; the snapshot below is what actually asserts shape.
+        // Idempotent statements (CREATE TABLE IF NOT EXISTS) may no-op-fail
+        // on re-apply; the snapshot below is what actually asserts shape.
       }
     }
   }

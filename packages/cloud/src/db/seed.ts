@@ -105,43 +105,6 @@ const templateSeeds: TemplateSeed[] = [
   },
 ];
 
-// Legacy ids from pre-migration-0008 seeds. Two generations existed:
-//   - path-style ids ('server/default', …) from the earliest cloud seed
-//   - dash-style ids ('default-server', …) from the role-based admin seed
-// Migration 0008 carried them into the unified templates table verbatim,
-// while the unified seed uses '<role>-default' ids — leaving duplicates.
-const LEGACY_TO_CURRENT: Record<string, string> = {
-  'server/default': 'server-default',
-  'client/default': 'client-default',
-  'docker/default': 'docker-default',
-  'default-server': 'server-default',
-  'default-client': 'client-default',
-  'default-docker': 'docker-default',
-};
-
-/**
- * Re-point references from legacy template ids to the current seeds and
- * delete the legacy rows. Idempotent; skips when no replacement exists
- * (e.g. a legacy row that was customized into the only copy).
- */
-export async function cleanupLegacyTemplates(db: D1Database): Promise<void> {
-  for (const [legacyId, currentId] of Object.entries(LEGACY_TO_CURRENT)) {
-    const replacement = await db.prepare('SELECT id FROM templates WHERE id = ?').bind(currentId).first();
-    if (!replacement) continue;
-
-    await db.prepare(
-      'UPDATE subscriptions SET overall_template_id = ? WHERE overall_template_id = ?'
-    ).bind(currentId, legacyId).run();
-    await db.prepare(
-      'UPDATE nodes SET server_overall_id = ? WHERE server_overall_id = ?'
-    ).bind(currentId, legacyId).run();
-    await db.prepare(
-      'UPDATE nodes SET docker_overall_id = ? WHERE docker_overall_id = ?'
-    ).bind(currentId, legacyId).run();
-    await db.prepare('DELETE FROM templates WHERE id = ?').bind(legacyId).run();
-  }
-}
-
 /**
  * Upsert the built-in templates (matched by id) so a deployed cloud never
  * serves stale seed templates. Custom templates (any id not in the seed

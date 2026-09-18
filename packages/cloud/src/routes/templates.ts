@@ -4,8 +4,8 @@ import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
 import { invalidateTemplateCache } from '../engine/registry';
 
-// Overall templates use categories: overall-server, overall-client, overall-docker (migration 0008)
-// For backward compatibility, the API accepts short names (server/client/docker) and maps them.
+// Overall templates use categories: overall-server, overall-client, overall-docker.
+// The API also accepts short names (server/client/docker) and maps them.
 const SHORT_TO_FULL: Record<string, string> = {
   server: 'overall-server',
   client: 'overall-client',

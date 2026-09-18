@@ -35,7 +35,7 @@ describe('Clients API — domain semantics', () => {
     expect(noType.status).toBe(400);
   });
 
-  it('rejects invalid fingerprint (no colon allowed — it namespaces KV keys)', async () => {
+  it('rejects invalid fingerprint (no colon allowed)', async () => {
     const res = await api('/api/clients/bad:fp', { headers: await adminHeaders() });
     expect(res.status).toBe(400);
     expect((await jsonBody(res)).error.code).toBe('BAD_FINGERPRINT');
@@ -82,14 +82,23 @@ describe('Clients API — domain semantics', () => {
     expect(self.status).toBe(200);
   });
 
-  it('maintains the tag index across re-tagging and releases claims on delete', async () => {
+  it('maintains tag uniqueness across re-tagging and releases claims on delete', async () => {
+    const tagOwner = async (tag: string) =>
+      ((env as any).DB.prepare('SELECT fingerprint, name FROM client_configs WHERE tag = ?')
+        .bind(tag).first()) as Promise<{ fingerprint: string; name: string } | null>;
+
     await putClient('fp-tag', 'cfg', { config: { tag: 'old-tag' } });
-    expect(await (env as any).CLIENT_CONFIGS.get('tag:old-tag')).toBe('fp-tag:cfg');
+    expect(await tagOwner('old-tag')).toEqual({ fingerprint: 'fp-tag', name: 'cfg' });
 
     // Re-tag: new claim created, old claim released.
     await putClient('fp-tag', 'cfg', { config: { tag: 'new-tag' } });
-    expect(await (env as any).CLIENT_CONFIGS.get('tag:new-tag')).toBe('fp-tag:cfg');
-    expect(await (env as any).CLIENT_CONFIGS.get('tag:old-tag')).toBeNull();
+    expect(await tagOwner('new-tag')).toEqual({ fingerprint: 'fp-tag', name: 'cfg' });
+    expect(await tagOwner('old-tag')).toBeNull();
+
+    // Another config claiming the same tag is rejected (UNIQUE index).
+    const taken = await putClient('fp-tag-2', 'other', { config: { tag: 'new-tag' } });
+    expect(taken.status).toBe(409);
+    expect(taken.body.error.code).toBe('TAG_CONFLICT');
 
     // Delete: claim released so the tag becomes claimable again.
     const del = await api('/api/clients/fp-tag/cfg', {
@@ -97,6 +106,6 @@ describe('Clients API — domain semantics', () => {
       headers: await adminHeaders(),
     });
     expect(del.status).toBe(200);
-    expect(await (env as any).CLIENT_CONFIGS.get('tag:new-tag')).toBeNull();
+    expect(await tagOwner('new-tag')).toBeNull();
   });
 });

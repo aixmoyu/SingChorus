@@ -138,7 +138,7 @@ function subBody(raw: { status: number; body: any }): any {
 
 describe('Subscription Delivery', () => {
   // With no active protocol instances anywhere, delivery has nothing to merge
-  // and fails with INSTANCES_MISSING (KV fallback is empty too).
+  // and fails with INSTANCES_MISSING (client-configs fallback is empty too).
   it('returns 500 INSTANCES_MISSING when no active instances exist', async () => {
     const sub = subBody(await createSub('Empty', 'empty-sub'));
     const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);

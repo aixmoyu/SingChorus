@@ -104,7 +104,6 @@ deploy.post('/:nodeId', adminAuth, async (c) => {
   // response (core calls /api/render/deploy). Archiving client configs under
   // single-segment `client:{instanceId}` keys drifted from the clients domain's
   // `client:{fingerprint}:{name}` schema and leaked orphan records on redeploys.
-
   c.get('logger').info('deploy artifacts rendered', {
     node: nodeId,
     instances: instanceConfigs.length,

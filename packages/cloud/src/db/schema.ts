@@ -1,7 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { seedIfEmpty, cleanupLegacyTemplates } from './seed';
-
-let legacyCleanupDone = false;
+import { seedIfEmpty } from './seed';
 
 /**
  * Memoized per isolate. The DDL/idempotent setup (~21 D1 statements) runs once
@@ -31,11 +29,6 @@ export function resetDatabaseInitCache(): void {
 async function doInitialize(db: D1Database): Promise<void> {
   await initializeDatabase(db);
   await seedIfEmpty(db).catch(() => { /* table may not exist yet */ });
-  if (!legacyCleanupDone) {
-    await cleanupLegacyTemplates(db)
-      .catch(() => { /* tables may not exist yet; retry on next cold start */ })
-      .finally(() => { legacyCleanupDone = true; });
-  }
 }
 
 export async function initializeDatabase(db: D1Database): Promise<void> {
@@ -70,8 +63,7 @@ const CREATE_TABLES = [
     server_params TEXT DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
-  // Unified templates table (migration 0008)
-  // Replaces protocols + overall_tables + legacy templates
+  // Unified templates table.
   // category: 'protocol' | 'overall-server' | 'overall-client' | 'overall-docker'
   `CREATE TABLE IF NOT EXISTS templates (
     id TEXT PRIMARY KEY,
@@ -88,8 +80,7 @@ const CREATE_TABLES = [
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
-  // CLOUD-P2 (migration 0010): `tag` mirrors params.tag so tags/check is an
-  // index lookup instead of a params LIKE full scan.
+  // `tag` mirrors params.tag so tags/check is an index lookup.
   `CREATE TABLE IF NOT EXISTS protocol_instances (
     id TEXT PRIMARY KEY,
     protocol_id TEXT NOT NULL,
@@ -116,7 +107,32 @@ const CREATE_TABLES = [
     updated_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (overall_template_id) REFERENCES templates(id)
   )`,
-  // Auth tables (migration 0007)
+  // Client configs synced from panels; `tag` mirrors config.tag and is
+  // unique-enforced by a partial index.
+  `CREATE TABLE IF NOT EXISTS client_configs (
+    fingerprint TEXT NOT NULL,
+    name TEXT NOT NULL,
+    config TEXT NOT NULL,
+    protocol_type TEXT NOT NULL,
+    content_hash TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    deployed INTEGER NOT NULL DEFAULT 0,
+    port INTEGER,
+    tag TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (fingerprint, name)
+  )`,
+  // Subscription delivery cache — served stale when D1 instance/template
+  // reads fail mid-delivery.
+  `CREATE TABLE IF NOT EXISTS sub_delivery_cache (
+    path TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    config TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  // Auth tables
   `CREATE TABLE IF NOT EXISTS tokens (
     id TEXT PRIMARY KEY,
     subject TEXT NOT NULL,
@@ -158,7 +174,9 @@ const CREATE_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor)',
   'CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource)',
   'CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)',
-  // Partial unique index: only enforce uniqueness on non-null fingerprints
-  // (rows created before migration 0009 have NULL).
+  // Partial unique index: a node is identified by its fingerprint; multiple
+  // fingerprint-less rows are allowed.
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_fingerprint ON nodes(fingerprint) WHERE fingerprint IS NOT NULL',
+  'CREATE INDEX IF NOT EXISTS idx_client_configs_fingerprint ON client_configs(fingerprint)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_client_configs_tag ON client_configs(tag) WHERE tag != \'\'',
 ];

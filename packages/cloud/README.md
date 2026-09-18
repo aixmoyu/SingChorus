@@ -22,7 +22,7 @@ pnpm test
 单击上方按钮一键部署到 Cloudflare，或手动操作：
 
 ```bash
-pnpm setup:prod   # 首次：创建 D1/KV + 部署 + 设置 secrets + 自动 seed（一键完成）
+pnpm setup:prod   # 首次：创建 D1 + 部署 + 设置 secrets + 自动 seed（一键完成）
 pnpm deploy       # 日常发版：迁移 + 重新部署
 ```
 

@@ -4,9 +4,8 @@
  *
  * 做的事情（幂等，可重复执行）：
  *   1. 获取或创建 D1 数据库（chorus-cloud-prod）
- *   2. 获取或创建 KV Namespace（CLIENT_CONFIGS）
- *   3. 生成 wrangler.prod.toml（写入真实资源 ID，不含 secrets）
- *   4. 应用远程 D1 迁移
+ *   2. 生成 wrangler.prod.toml（写入真实资源 ID，不含 secrets）
+ *   3. 应用远程 D1 迁移
  *   5. 部署 Worker
  *   6. 设置生产 secrets（AUTH_TOKEN / JWT_SECRET）
  *      - 优先使用环境变量 AUTH_TOKEN / JWT_SECRET 的值
@@ -31,7 +30,6 @@ const PROD_TOML = resolve(CLOUD_DIR, 'wrangler.prod.toml');
 const PROD_VARS = resolve(CLOUD_DIR, '.prod.vars');
 
 const D1_NAME = 'chorus-cloud-prod';
-const KV_TITLE = 'CLIENT_CONFIGS';
 const WORKER_NAME = 'chorus-cloud';
 const MIGRATIONS_DIR = 'migrations';
 
@@ -66,8 +64,8 @@ function runJson(cmd, opts = {}) {
   } catch {
     // fall through
   }
-  // Some wrangler subcommands (e.g. `kv namespace list`) reject --json but
-  // already emit a JSON array by default — parse the plain output.
+  // Some wrangler subcommands reject --json but already emit a JSON array by
+  // default — parse the plain output.
   try {
     const out = run(cmd, { ...opts, ignoreError: false });
     return JSON.parse(out);
@@ -109,44 +107,10 @@ function getOrCreateD1() {
   die(`无法创建或查找 D1 database_id，请手动执行：npx wrangler d1 create ${D1_NAME}`);
 }
 
-function getOrCreateKV() {
-  log(`KV Namespace：${KV_TITLE}`);
-  let list = runJson('npx wrangler kv namespace list');
-  let existing = Array.isArray(list)
-    ? list.find((n) => n.title === KV_TITLE || (n.title || '').endsWith(`__${KV_TITLE}`))
-    : null;
-  if (existing) {
-    ok(`已存在，复用 ID = ${existing.id}`);
-    return existing.id;
-  }
-  const created = runJson(`npx wrangler kv namespace create ${KV_TITLE}`);
-  if (created && created.id) {
-    ok(`已创建，ID = ${created.id}`);
-    return created.id;
-  }
-  // Text fallback (create doesn't support --json)
-  const raw = run(`npx wrangler kv namespace create ${KV_TITLE}`, { ignoreError: true });
-  const m = raw.match(/id["'\s:=]+([0-9a-f]{32})/i);
-  if (m) {
-    ok(`已创建，ID = ${m[1]}`);
-    return m[1];
-  }
-  // create likely failed with "already exists" (race) → re-list
-  const list2 = runJson('npx wrangler kv namespace list');
-  const found2 = Array.isArray(list2)
-    ? list2.find((n) => n.title === KV_TITLE || (n.title || '').endsWith(`__${KV_TITLE}`))
-    : null;
-  if (found2) {
-    ok(`已存在，复用 ID = ${found2.id}`);
-    return found2.id;
-  }
-  die(`无法创建或查找 KV namespace id，请手动执行：npx wrangler kv namespace create ${KV_TITLE}`);
-}
-
-function generateProdConfig(d1Id, kvId) {
+function generateProdConfig(d1Id) {
   log(`生成 wrangler.prod.toml`);
   const content = `# 自动生成于 ${new Date().toISOString()} — 请勿手动编辑。
-# 生产配置：包含真实 Cloudflare 资源 ID（D1/KV）。
+# 生产配置：包含真实 Cloudflare 资源 ID（D1）。
 # Secrets（AUTH_TOKEN / JWT_SECRET）通过 \`wrangler secret put\` 设置，不在本文件中。
 # 本文件已在 .gitignore 中，不会提交到版本控制。
 
@@ -154,10 +118,6 @@ name = "${WORKER_NAME}"
 main = "src/index.ts"
 compatibility_date = "2026-06-11"
 compatibility_flags = ["nodejs_compat"]
-
-kv_namespaces = [
-  { binding = "CLIENT_CONFIGS", id = "${kvId}" }
-]
 
 [[d1_databases]]
 binding = "DB"
@@ -278,8 +238,7 @@ async function main() {
   preflight();
 
   const d1Id = getOrCreateD1();
-  const kvId = getOrCreateKV();
-  generateProdConfig(d1Id, kvId);
+  generateProdConfig(d1Id);
 
   applyMigrations();
   const url = deployWorker();

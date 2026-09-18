@@ -11,9 +11,9 @@ import { noopLogger, type Logger } from '../logger.js';
  *
  * core-D3 contract (binding for every driver of this class):
  *   - `tick()` must be invoked at intervals of ≥30s (panel: SYNC_TICK_MS in
- *     core-provider.ts). Every tick costs at least one KV list operation on
- *     the cloud; the Workers free tier allows ~1,000 list ops/day, so a
- *     faster tick can exhaust the daily quota (see pullIntervalMs below).
+ *     core-provider.ts). Every full sync round costs one list query on the
+ *     cloud per node pulled; keep pullIntervalMs generous so idle panels
+ *     don't burn cloud quota needlessly (see pullIntervalMs below).
  *   - Config mutations must NOT wait for the tick — call trigger() instead.
  */
 const BACKOFF_MS = [5_000, 15_000, 60_000, 300_000, 900_000];
@@ -72,10 +72,9 @@ export class SyncService {
 
   /**
    * Periodic full-sync interval (pull others' configs, retry stuck items).
-   * Must stay generous: every tick consumes at least one KV list operation on
-   * the cloud, and the Workers free tier only allows ~1,000 KV list ops per
-   * day. Config changes do NOT wait for this timer — mutations trigger an
-   * immediate sync via trigger().
+   * Must stay generous: every round costs one list query per node pulled on
+   * the cloud. Config changes do NOT wait for this timer — mutations trigger
+   * an immediate sync via trigger().
    */
   private pullIntervalMs = 600_000;
 
@@ -99,7 +98,7 @@ export class SyncService {
         durationMs: Date.now() - startedAt,
       });
       // 成功即作废未到期的退避重试定时器（core-R5）：否则手动 trigger()
-      // 成功后，退避定时器仍会再触发一轮完整同步，白白消耗云端 KV 额度。
+      // 成功后，退避定时器仍会再触发一轮完整同步，白白消耗云端请求额度。
       if (this.timer) {
         clearTimeout(this.timer);
         this.timer = null;

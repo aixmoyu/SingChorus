@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
-import { signJWT, hashToken, TOKEN_TTL, resolveJwtSecret } from '../auth/jwt';
+import { signJWT, hashToken, TOKEN_TTL } from '../auth/jwt';
 import { logAction } from '../services/audit';
 
 const createUserSchema = z.object({
@@ -137,7 +137,7 @@ users.post('/:id/token', async (c) => {
 
   const { token, jti, exp } = await signJWT(
     { sub: user.id, type: 'user', ttl: TOKEN_TTL.USER },
-    resolveJwtSecret(c.env),
+    c.env.JWT_SECRET,
   );
 
   // Record in tokens table

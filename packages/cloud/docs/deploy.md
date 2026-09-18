@@ -3,7 +3,7 @@
 将 `chorus-cloud` Worker 部署到 Cloudflare 的生产环境。
 
 > 本指南对应重构后的部署流程：**本地调试零配置** + **生产环境一键初始化**。
-> 不再需要手动复制 D1/KV 的 UUID，secrets 不再以明文写入 `wrangler.toml`。
+> 不再需要手动复制 D1 的 UUID，secrets 不再以明文写入 `wrangler.toml`。
 
 ---
 
@@ -11,14 +11,14 @@
 
 | 文件 | 用途 | 是否提交 |
 | --- | --- | --- |
-| `wrangler.toml` | **本地开发**配置：占位 ID（`00000000-...`），无 secrets。`wrangler dev` 用 `.wrangler/state/` 下的本地模拟 D1/KV | ✅ 提交 |
+| `wrangler.toml` | **本地开发**配置：占位 ID（`00000000-...`），无 secrets。`wrangler dev` 用 `.wrangler/state/` 下的本地模拟 D1 | ✅ 提交 |
 | `wrangler.prod.toml` | **生产**配置：真实资源 ID。由 `setup-prod.mjs` 自动生成 | ❌ gitignored |
 | `.dev.vars` | 本地 secrets（`AUTH_TOKEN` / `JWT_SECRET`） | ❌ gitignored |
 | `.prod.vars` | 生产 secrets 的本地查阅副本（仅供查阅，Worker 运行时读 Cloudflare secrets） | ❌ gitignored |
 | `.dev.vars.example` | 本地 secrets 模板 | ✅ 提交 |
 | `scripts/setup-prod.mjs` | 生产环境一键初始化脚本 | ✅ 提交 |
 
-**核心原理**：Wrangler 在 `wrangler dev` 时默认使用**本地模拟**的 D1（SQLite）和 KV，不读真实的 `database_id`，所以本地开发完全不需要真实资源 ID。真实 ID 只在 `wrangler deploy` 时用到，且由脚本自动写入 `wrangler.prod.toml`。D1/KV 的 ID 是**标识符而非密钥**（访问由 API Token 控制），但本方案仍将其放入 gitignored 的 prod 配置，保持 `wrangler.toml` 干净。
+**核心原理**：Wrangler 在 `wrangler dev` 时默认使用**本地模拟**的 D1（SQLite），不读真实的 `database_id`，所以本地开发完全不需要真实资源 ID。真实 ID 只在 `wrangler deploy` 时用到，且由脚本自动写入 `wrangler.prod.toml`。D1 的 ID 是**标识符而非密钥**（访问由 API Token 控制），但本方案仍将其放入 gitignored 的 prod 配置，保持 `wrangler.toml` 干净。
 
 ---
 
@@ -61,7 +61,7 @@ AUTH_TOKEN = "dev-token-随便填"
 JWT_SECRET = "dev-jwt-随便填"
 ```
 
-> `wrangler dev` 会用本地模拟资源，**不需要**真实的 D1/KV ID，`wrangler.toml` 里的占位 ID 仅供本地模式作为存储键使用。
+> `wrangler dev` 会用本地模拟资源，**不需要**真实的 D1 ID，`wrangler.toml` 里的占位 ID 仅供本地模式作为存储键使用。
 
 ---
 
@@ -76,16 +76,15 @@ pnpm setup:prod
 
 1. **前置检查** Wrangler 认证（`wrangler login` 或 `CLOUDFLARE_API_TOKEN`）
 2. **获取或创建 D1 数据库** `chorus-cloud-prod`（已存在则复用 ID）
-3. **获取或创建 KV Namespace** `CLIENT_CONFIGS`（已存在则复用 ID）
-4. **生成 `wrangler.prod.toml`**（写入真实资源 ID，不含 secrets）
-5. **应用远程 D1 迁移**（`migrations/` 下全部 SQL）
-6. **部署 Worker**
-7. **设置生产 Secrets**：
+3. **生成 `wrangler.prod.toml`**（写入真实资源 ID，不含 secrets）
+4. **应用远程 D1 迁移**（`migrations/` 下全部 SQL）
+5. **部署 Worker**
+6. **设置生产 Secrets**：
    - `AUTH_TOKEN` / `JWT_SECRET` 的取值优先级：环境变量 > 已存在的 `.prod.vars` > 随机生成 64 字符 hex
    - 生成/取到的值写入 `.prod.vars`（gitignored，供本地查阅）
    - 通过 `wrangler secret put` 加密存储到 Cloudflare 侧
-8. **自动 seed 协议模板**：用 AUTH_TOKEN 调 `/api/auth/login` 换 JWT，再用 JWT 调 `/api/admin/seed`（幂等，可重复执行）
-9. **打印部署 URL 与登录命令**
+7. **自动 seed 协议模板**：用 AUTH_TOKEN 调 `/api/auth/login` 换 JWT，再用 JWT 调 `/api/admin/seed`（幂等，可重复执行）
+8. **打印部署 URL 与登录命令**
 
 ### 指定密钥（可选）
 
@@ -178,7 +177,7 @@ npx wrangler deploy --config wrangler.prod.toml \
 
 ## 5. CI/CD 集成（GitHub Actions）
 
-`wrangler.prod.toml` 是 gitignored 的，CI 需要在流水线里重新生成。由于 `setup:prod` 幂等，**CI 直接调用它**即可——已存在的 D1/KV 会被复用，`wrangler.prod.toml` 会被重新生成（ID 不变）。
+`wrangler.prod.toml` 是 gitignored 的，CI 需要在流水线里重新生成。由于 `setup:prod` 幂等，**CI 直接调用它**即可——已存在的 D1 会被复用，`wrangler.prod.toml` 会被重新生成（ID 不变）。
 
 创建 `.github/workflows/deploy-cloud.yml`：
 
@@ -288,7 +287,7 @@ namespace_id = "<RATE_LIMIT_NAMESPACE_ID>"
 按钮流程由 Cloudflare 官方 [Deploy to Cloudflare](https://developers.cloudflare.com/workers/platform/deploy-buttons/) 支持：
 
 1. **克隆仓库**：Cloudflare 把 `packages/cloud` 子目录克隆到用户自己的 GitHub/GitLab 账号（成为独立仓库，可继续开发）
-2. **自动开通资源**：读取 `wrangler.toml`，自动创建并绑定 D1 数据库和 KV 命名空间，回填真实资源 ID
+2. **自动开通资源**：读取 `wrangler.toml`，自动创建并绑定 D1 数据库，回填真实资源 ID
 3. **填写 secrets**：部署设置页会提示填写 `AUTH_TOKEN` / `JWT_SECRET`（定义来自 `.dev.vars.example` 与 `package.json` 的 `cloudflare.bindings` 描述），建议用 `openssl rand -hex 32` 生成
 4. **构建部署**：执行 `deploy` 脚本（`wrangler d1 migrations apply DB --remote && wrangler deploy`，引用默认 `wrangler.toml`）完成部署
 

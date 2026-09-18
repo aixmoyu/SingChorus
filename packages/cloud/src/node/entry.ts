@@ -7,7 +7,6 @@
  * the injected platform bindings differ:
  *
  *   D1        → SqliteD1      (better-sqlite3, single file)
- *   KV        → SqliteKV      (a kv_store table in the same SQLite file)
  *   Secrets   → AUTH_TOKEN / JWT_SECRET env vars, auto-generated + persisted
  *               on first boot when unset
  *   RateLimit → MemoryRateLimiter (opt-in via CHORUS_CLOUD_SUB_RATE_LIMIT_RPM)
@@ -24,7 +23,6 @@ import { serve } from '@hono/node-server';
 import { app } from '../index';
 import { ensureDatabaseInitialized } from '../db/schema';
 import { SqliteD1 } from './d1-sqlite';
-import { SqliteKV } from './kv-sqlite';
 import { MemoryRateLimiter } from './rate-limiter';
 import { createLogger } from '../logger';
 
@@ -102,7 +100,6 @@ async function main(): Promise<void> {
   // middleware behaves identically on both runtimes.
   const env = {
     DB: new SqliteD1(sqlite),
-    CLIENT_CONFIGS: new SqliteKV(sqlite),
     AUTH_TOKEN: secrets.AUTH_TOKEN,
     JWT_SECRET: secrets.JWT_SECRET,
     LOG_LEVEL: process.env.CHORUS_CLOUD_LOG_LEVEL ?? process.env.LOG_LEVEL ?? 'info',

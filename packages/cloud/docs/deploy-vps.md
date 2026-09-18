@@ -6,13 +6,12 @@ chorus-cloud 是**同一份业务代码、两个运行时入口**：
 | --- | --- | --- |
 | 入口 | `src/index.ts`（wrangler 部署） | `src/node/entry.ts`（本指南） |
 | 数据库 | D1（云端 SQLite） | SQLite 单文件（better-sqlite3） |
-| 客户端配置缓存 | KV Namespace | 同一 SQLite 文件里的 `kv_store` 表 |
 | Secrets | `wrangler secret put` | 环境变量 / 首次启动自动生成 |
 | 路由 / 认证 / 渲染引擎 | **完全一致**（同一个 Hono app，注入不同的存储适配器） | |
 
-存储适配层（`src/node/d1-sqlite.ts`、`src/node/kv-sqlite.ts`）只实现业务代码实际
-用到的 D1/KV 接口面，并由 `tests/node/api.spec.ts` 在 CI 中钉死该契约——路由若
-用到适配层不支持的方法会直接挂测试，不会等到线上才暴露。
+存储适配层（`src/node/d1-sqlite.ts`）只实现业务代码实际用到的 D1 接口面，
+并由 `tests/node/api.spec.ts` 在 CI 中钉死该契约——路由若用到适配层不支持的
+方法会直接挂测试，不会等到线上才暴露。
 
 ---
 
@@ -94,10 +93,6 @@ npx wrangler d1 export chorus-cloud-prod --remote --output dump.sql
 sqlite3 /var/lib/chorus-cloud/chorus.db < dump.sql
 ```
 
-**KV（`CLIENT_CONFIGS`）不需要迁移**：里面只有客户端配置缓存、订阅投递缓存和
-tag 索引，全部带 TTL 且可由客户端重新同步/注册再生。节点（panel）会通过
-`/api/nodes/register` 心跳自动回到 online 状态。
-
 迁移后把 panel 的 cloud URL 指向新地址即可（panel 设置里的 cloud 地址 /
 `core_url`），panel 对两种部署形态无感知——协议都是同一套 HTTP API。
 
@@ -107,15 +102,14 @@ tag 索引，全部带 TTL 且可由客户端重新同步/注册再生。节点�
 
 | 点 | Workers 版 | Node/VPS 版 |
 | --- | --- | --- |
-| KV 一致性 | 最终一致（写后全球传播 ≤60s） | 强一致 |
-| KV 配额 | 免费版 list 1000 次/天等配额 | 无配额 |
-| `expirationTtl` 下限 | 60s | 无下限 |
-| 订阅限流 | binding 未绑定 → 不限流 | 默认不限流，设 env 开启（内存滑窗） |
-| 多实例横向扩展 | 天然（D1/KV 共享） | 单进程单文件；多实例需共享 SQLite（不建议，用 NFS 会有锁问题） |
+| D1 一致性 | 单一主库，强一致 | 本地文件，强一致 |
+| D1 配额 | 免费版行读 500 万/天、行写 10 万/天 | 无配额 |
+| 订阅限流 | 默认不限流 | 默认不限流，设 env 开启（内存滑窗） |
+| 多实例横向扩展 | 天然（D1 共享） | 单进程单文件；多实例需共享 SQLite（不建议，用 NFS 会有锁问题） |
 | 后台任务 | `waitUntil` | fire-and-forget promise |
 
 其余语义（认证/吊销、模板渲染、订阅投递、审计日志）完全一致，由两套测试套件
-共同保证：`pnpm test:workers`（workerd + 真实 D1/KV 模拟）与 `pnpm test:node`
+共同保证：`pnpm test:workers`（workerd + 真实 D1 模拟）与 `pnpm test:node`
 （SQLite 适配器 + Node runtime）。
 
 ## 构建说明

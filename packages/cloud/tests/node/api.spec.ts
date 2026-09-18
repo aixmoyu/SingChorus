@@ -1,8 +1,8 @@
 /**
  * Node-environment API suite: runs the full Hono app — the same app the
- * Workers suite exercises via workerd — against the SQLite D1/KV adapters.
+ * Workers suite exercises via workerd — against the SQLite D1 adapter.
  * This pins the adapter contract that the Node/VPS entry (src/node/entry.ts)
- * depends on, so a route adding a binding method the adapters don't support
+ * depends on, so a route adding a binding method the adapter doesn't support
  * fails CI here instead of breaking self-hosted deploys at runtime.
  *
  * Run: pnpm test:node
@@ -12,9 +12,8 @@ import Database from 'better-sqlite3';
 
 import { app } from '../../src/index';
 import { ensureDatabaseInitialized, resetDatabaseInitCache } from '../../src/db/schema';
-import { resetSubscriptionKvCache } from '../../src/routes/subscriptions';
+import { resetSubscriptionCaches } from '../../src/routes/subscriptions';
 import { SqliteD1 } from '../../src/node/d1-sqlite';
-import { SqliteKV } from '../../src/node/kv-sqlite';
 
 const AUTH_TOKEN = 'node-test-auth-token';
 const JWT_SECRET = 'node-test-jwt-secret';
@@ -24,7 +23,6 @@ function makeEnv(): { env: Env; sqlite: Database.Database } {
   sqlite.pragma('foreign_keys = ON');
   const env = {
     DB: new SqliteD1(sqlite),
-    CLIENT_CONFIGS: new SqliteKV(sqlite),
     AUTH_TOKEN,
     JWT_SECRET,
   } as unknown as Env;
@@ -57,7 +55,7 @@ beforeEach(() => {
   // Fresh in-memory DB per test; drop the per-process init memo so schema
   // setup re-runs (same reason the Workers suite calls its reset helpers).
   resetDatabaseInitCache();
-  resetSubscriptionKvCache();
+  resetSubscriptionCaches();
   jwt = '';
 });
 
@@ -90,7 +88,7 @@ describe('node runtime: API contract over SQLite adapters', () => {
     const { accessToken } = (await res.json()) as { accessToken: string };
     expect(accessToken).toBeTruthy();
 
-    // adminAuth hits D1 (tokens table) + KV (revoke markers) — both adapters.
+    // adminAuth hits D1 (tokens table revocation check).
     const probe = await api(env, '/api/auth/audit-logs', { headers: { Authorization: `Bearer ${accessToken}` } });
     expect(probe.status).toBe(200);
   });
@@ -123,7 +121,7 @@ describe('node runtime: API contract over SQLite adapters', () => {
     expect((await api(env, `/api/nodes/${node.id}`, { headers })).status).toBe(404);
   });
 
-  it('clients: KV put/get/list/delete with metadata, TTL, port-conflict and tag index', async () => {
+  it('clients: D1 put/get/list/delete, port-conflict and tag uniqueness', async () => {
     const headers = await authHeaders(env);
     const fp = 'fp-node-test';
     const put = await api(env, `/api/clients/${fp}/c1`, {
@@ -140,7 +138,7 @@ describe('node runtime: API contract over SQLite adapters', () => {
     expect(one.status).toBe(200);
     expect((((await one.json()) as { client: { config: { tag: string } } }).client.config).tag).toBe('proxy-1');
 
-    // Port conflict check reads mirrored list metadata — KV list + metadata round-trip.
+    // Port conflict check reads the same-node rows — one indexed query.
     const conflict = await api(env, `/api/clients/${fp}/c2`, {
       method: 'PUT',
       headers,
@@ -152,12 +150,12 @@ describe('node runtime: API contract over SQLite adapters', () => {
     const byNode = await api(env, `/api/clients/${fp}`, { headers });
     expect(((await byNode.json()) as { clients: unknown[] }).clients).toHaveLength(1);
 
-    // delete → releases tag claim (KV get + delete on the index key)
+    // delete → releases the tag claim (the tag lives on the deleted row)
     expect((await api(env, `/api/clients/${fp}/c1`, { method: 'DELETE', headers })).status).toBe(200);
     expect((await api(env, `/api/clients/${fp}/c1`, { headers })).status).toBe(404);
   });
 
-  it('subscriptions: D1 CRUD, delivery via KV fallback, inactive path uses fireAndForget', async () => {
+  it('subscriptions: D1 CRUD, delivery via client-configs fallback, inactive path uses fireAndForget', async () => {
     const headers = await authHeaders(env);
     const created = await api(env, '/api/subscriptions', {
       method: 'POST',
@@ -171,12 +169,12 @@ describe('node runtime: API contract over SQLite adapters', () => {
     expect((await api(env, `/s/${sub.path}?token=nope`)).status).toBe(401);
 
     // D1 row lookup + instance query succeed via adapters; no active
-    // instances and empty KV → explicit INSTANCES_MISSING.
+    // instances and no synced configs → explicit INSTANCES_MISSING.
     const delivered = await api(env, `/s/${sub.path}?token=${sub.token}`);
     expect(delivered.status).toBe(500);
     expect(((await delivered.json()) as { error: { code: string } }).error.code).toBe('INSTANCES_MISSING');
 
-    // Disable, then hit delivery: the inactive path schedules a KV cache
+    // Disable, then hit delivery: the inactive path schedules a cache-row
     // delete via fireAndForget — on Node there is no ExecutionContext, so
     // this asserts the swap doesn't blow up mid-response.
     const updated = await api(env, `/api/subscriptions/${sub.id}`, {
@@ -210,36 +208,6 @@ describe('node runtime: adapter primitives', () => {
     const d1 = new SqliteD1(new Database(':memory:'));
     expect(await d1.prepare('SELECT 1 AS x WHERE 0').first()).toBeNull();
     expect(await d1.prepare('SELECT 42 AS x').first<number>('x')).toBe(42);
-  });
-
-  it('SqliteKV: prefix list ordering, metadata, TTL expiry, cursor paging', async () => {
-    const sqlite = new Database(':memory:');
-    const kv = new SqliteKV(sqlite);
-    await kv.put('client:a:1', 'v1', { expirationTtl: 90, metadata: { name: '1' } });
-    await kv.put('client:a:2', 'v2');
-    await kv.put('client:b:1', 'v3');
-    await kv.put('tag:t', 'owner');
-
-    const listed = await kv.list({ prefix: 'client:a:' });
-    expect(listed.keys.map((k) => k.name)).toEqual(['client:a:1', 'client:a:2']);
-    expect(listed.keys[0].metadata).toEqual({ name: '1' });
-    expect(listed.list_complete).toBe(true);
-    await expect(kv.get('client:a:1')).resolves.toBe('v1');
-
-    // Expired entries read as missing and vanish from list (lazy purge).
-    sqlite.prepare("UPDATE kv_store SET expire_at = ? WHERE key = 'client:a:1'").run(Date.now() - 1000);
-    await expect(kv.get('client:a:1')).resolves.toBeNull();
-    expect((await kv.list({ prefix: 'client:a:' })).keys.map((k) => k.name)).toEqual(['client:a:2']);
-
-    // Cursor paging: page size 1 → two pages, cursor advances lexicographically.
-    const page1 = await kv.list({ prefix: 'client:', limit: 1 });
-    expect(page1.keys.map((k) => k.name)).toEqual(['client:a:2']);
-    expect(page1.list_complete).toBe(false);
-    const page2 = await kv.list({ prefix: 'client:', limit: 1, cursor: page1.cursor });
-    expect(page2.keys.map((k) => k.name)).toEqual(['client:b:1']);
-
-    await kv.delete('client:a:2');
-    await expect(kv.get('client:a:2')).resolves.toBeNull();
   });
 
   it('MemoryRateLimiter: allows up to max, then rejects within the window', async () => {

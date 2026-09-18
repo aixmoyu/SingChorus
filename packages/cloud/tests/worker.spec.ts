@@ -1,13 +1,13 @@
 import { SELF, env } from 'cloudflare:test';
 import { beforeEach } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
-import { resetSubscriptionKvCache } from '../src/routes/subscriptions';
+import { resetSubscriptionCaches } from '../src/routes/subscriptions';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
 beforeEach(() => {
   resetDatabaseInitCache();
-  resetSubscriptionKvCache();
+  resetSubscriptionCaches();
 });
 
 // P1: Helper to obtain JWT via /api/auth/login, then use it for authenticated requests

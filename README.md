@@ -115,7 +115,7 @@ npx @chorus/ctl deploy --json
 部署流程（约 2 分钟）：
 
 1. 点击按钮并登录 Cloudflare（需 GitHub/GitLab 账号授权，仓库需为公开仓库）
-2. Cloudflare 自动克隆 `packages/cloud` 到你的账号、创建并绑定 D1 数据库和 KV 命名空间
+2. Cloudflare 自动克隆 `packages/cloud` 到你的账号、创建并绑定 D1 数据库
 3. 在设置页填入两个密钥（可用 `openssl rand -hex 32` 生成）：
    - `AUTH_TOKEN`：管理 API 的 Bearer Token
    - `JWT_SECRET`：JWT 签名密钥
@@ -138,7 +138,7 @@ curl https://chorus-cloud.<你的子域>.workers.dev/health
 cd packages/cloud
 pnpm install
 npx wrangler login
-pnpm setup:prod   # 首次部署：自动创建 D1/KV、应用迁移、部署 Worker、设置 secrets、seed 模板
+pnpm setup:prod   # 首次部署：自动创建 D1、应用迁移、部署 Worker、设置 secrets、seed 模板
 pnpm deploy:prod  # 日常发版：应用新迁移并重新部署
 ```
 

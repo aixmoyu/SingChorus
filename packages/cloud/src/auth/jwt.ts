@@ -98,22 +98,3 @@ export const TOKEN_TTL = {
   ADMIN: 24 * 60 * 60,       // 24 hours
   USER: 30 * 24 * 60 * 60,   // 30 days
 } as const;
-
-let jwtSecretWarned = false;
-
-/**
- * 解析 JWT 签发密钥。JWT_SECRET 缺失时回退到 AUTH_TOKEN：
- * AUTH_TOKEN 同时用作登录凭据，一旦泄漏即可离线伪造任意 admin JWT。
- * 回退仅为存量部署兼容，缺失时按 isolate 一次性告警提醒运维补齐。
- */
-export function resolveJwtSecret(env: { JWT_SECRET?: string | null; AUTH_TOKEN: string }): string {
-  if (env.JWT_SECRET) return env.JWT_SECRET;
-  if (!jwtSecretWarned) {
-    jwtSecretWarned = true;
-    console.warn(
-      '[auth] JWT_SECRET is not set — falling back to AUTH_TOKEN as the JWT signing key. '
-      + 'Set JWT_SECRET (wrangler secret put JWT_SECRET) so AUTH_TOKEN leakage cannot enable offline JWT forgery.',
-    );
-  }
-  return env.AUTH_TOKEN;
-}

@@ -46,7 +46,7 @@ export const OverallConfigFileSchema = z.object({
 
 export type OverallConfigFile = z.infer<typeof OverallConfigFileSchema>;
 
-// Unified template categories (migration 0008)
+// Unified template categories
 export const TEMPLATE_CATEGORIES = ['protocol', 'overall-server', 'overall-client', 'overall-docker'] as const;
 export type TemplateCategory = typeof TEMPLATE_CATEGORIES[number];
 
@@ -70,7 +70,7 @@ export const TemplateSchema = z.object({
 
 export type Template = z.infer<typeof TemplateSchema>;
 
-// Legacy aliases for backward compatibility with existing code
+// Rendering-facing views of a unified Template (category + required fields narrowed)
 export type Protocol = Omit<Template, 'category' | 'templateContent' | 'config' | 'entryScript'> & {
   category: 'protocol';
   serverTemplate: string;

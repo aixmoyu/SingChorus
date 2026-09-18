@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hashToken, resolveJwtSecret, signJWT, TOKEN_TTL, verifyJWT } from '../src/auth/jwt';
+import { hashToken, signJWT, TOKEN_TTL, verifyJWT } from '../src/auth/jwt';
 
 /**
  * Unit coverage for the JWT primitives used by every authenticated route.
@@ -68,16 +68,5 @@ describe('TOKEN_TTL', () => {
   it('matches the documented policy (admin 24h, user 30d)', () => {
     expect(TOKEN_TTL.ADMIN).toBe(86_400);
     expect(TOKEN_TTL.USER).toBe(30 * 86_400);
-  });
-});
-
-describe('resolveJwtSecret', () => {
-  it('prefers JWT_SECRET when present', () => {
-    expect(resolveJwtSecret({ JWT_SECRET: 'explicit', AUTH_TOKEN: 'fallback' })).toBe('explicit');
-  });
-
-  it('falls back to AUTH_TOKEN when JWT_SECRET is missing (legacy deployments)', () => {
-    expect(resolveJwtSecret({ AUTH_TOKEN: 'fallback' })).toBe('fallback');
-    expect(resolveJwtSecret({ JWT_SECRET: null, AUTH_TOKEN: 'fallback' })).toBe('fallback');
   });
 });
