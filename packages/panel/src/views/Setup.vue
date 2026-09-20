@@ -66,7 +66,7 @@
             <form @submit.prevent="finish">
               <n-form :label-placement="labelPlacement" label-width="140">
                 <n-form-item label="Cloud URL">
-                  <n-input v-model:value="cloudUrl" placeholder="https://cloud.example.com" />
+                  <CloudUrlInput v-model:value="cloudUrl" placeholder="cloud.example.com" />
                 </n-form-item>
                 <n-form-item label="Cloud Token">
                   <n-input v-model:value="cloudToken" type="password" show-password-on="click" placeholder="Cloud API token" />
@@ -107,6 +107,7 @@ import {
 } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useInitStore } from '@/stores/init'
+import CloudUrlInput from '@/components/CloudUrlInput.vue'
 import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
 

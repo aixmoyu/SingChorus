@@ -31,7 +31,7 @@
     <n-card title="Cloud Settings">
       <n-form :model="form" :label-placement="labelPlacement" label-width="140">
         <n-form-item label="Cloud URL">
-          <n-input v-model:value="form.coreUrl" placeholder="https://cloud.example.com…" />
+          <CloudUrlInput v-model:value="form.coreUrl" placeholder="cloud.example.com…" />
         </n-form-item>
         <n-form-item label="Cloud Token">
           <n-input v-model:value="form.coreToken" type="password" show-password-on="click" placeholder="Cloud API token" />
@@ -53,6 +53,7 @@ import { reactive, ref, computed, onMounted } from 'vue'
 import { NCard, NDescriptions, NDescriptionsItem, NSpin, NForm, NFormItem, NInput, NButton, NAlert, useMessage } from 'naive-ui'
 import { useInfoStore } from '@/stores/info'
 import { useSettingsStore } from '@/stores/settings'
+import CloudUrlInput from '@/components/CloudUrlInput.vue'
 import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
 

@@ -7,6 +7,7 @@ import { mergeServer, mergeSubscription } from './services/merger.js';
 import type { ConfigEntry, SyncStatus, AppConfig, Subscription, NodeIdentity } from './schemas/config.js';
 import { AppError, ERRORS } from './errors.js';
 import { consoleLogger, type Logger } from './logger.js';
+import { composeTag } from './tag.js';
 
 /** Optional host-provided dependencies (logging, request tracing). */
 export interface CoreOptions {
@@ -111,8 +112,22 @@ export class ChorusCore {
     ].join('\n');
   }
 
+  /**
+   * Render a protocol config via the cloud. When the caller leaves `tag`
+   * empty, compose one locally as `<node-name>-<protocol>-<random>` (e.g.
+   * `tokyo-01-hy2-x7k2m9`) so rendered configs are identifiable per node;
+   * an explicit user tag passes through untouched — cloud's
+   * resolveAndValidate gives user values precedence over generators.
+   */
+  async generateConfig(type: string, params: Record<string, unknown>) {
+    if (!params.tag) {
+      return this.cloud.generateConfig(type, { ...params, tag: composeTag(this.getIdentity().name, type) });
+    }
+    return this.cloud.generateConfig(type, params);
+  }
+
   async generateAndAdd(name: string, node: string, type: string, params: Record<string, unknown>, enabled?: boolean): Promise<ConfigEntry> {
-    const result = await this.cloud.generateConfig(type, params);
+    const result = await this.generateConfig(type, params);
     this.configs.upsert(name, node, type, result.server_config, result.client_config, params);
     if (enabled === false) this.configs.disable(name);
     return this.configs.get(name);

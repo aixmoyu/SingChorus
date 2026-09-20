@@ -80,7 +80,8 @@ describe('ChorusCore 基础编排', () => {
       client_config: { type: 'vless', server_port: 9600 },
     });
     const e1 = await core.generateAndAdd('gen-1', 'edge', 'vless', { uuid: 'u1' });
-    expect(cloud.generateConfig).toHaveBeenCalledWith('vless', { uuid: 'u1' });
+    // tag 留空 → core 注入 <node-name>-<protocol>-<random>
+    expect(cloud.generateConfig).toHaveBeenCalledWith('vless', expect.objectContaining({ uuid: 'u1', tag: expect.stringMatching(/^node-[a-z0-9]{8}-vless-[a-z0-9]{6}$/) }));
     expect(e1.enabled).toBe(true);
     expect(e1.server_config.listen_port).toBe(9600);
     // 重新生成同名配置 → 覆盖而不是报错
@@ -88,6 +89,27 @@ describe('ChorusCore 基础编排', () => {
     expect(e2.params).toEqual({ uuid: 'u2' });
     const e3 = await core.generateAndAdd('gen-2', 'edge', 'vless', { uuid: 'u3' }, false);
     expect(e3.enabled).toBe(false);
+  });
+
+  it('generateConfig：用户显式 tag 原样透传；留空才注入节点前缀', async () => {
+    cloud.generateConfig.mockResolvedValue({ server_config: {}, client_config: {} });
+    // 显式 tag → 不改写
+    await core.generateConfig('hysteria2', { tag: 'my-tag', domain: 'a.com' });
+    expect(cloud.generateConfig).toHaveBeenLastCalledWith('hysteria2', { tag: 'my-tag', domain: 'a.com' });
+    // 空串等价于未填 → 注入，且协议短名走映射（hysteria2 → hy2）
+    await core.generateConfig('hysteria2', { domain: 'a.com', tag: '' });
+    const called = cloud.generateConfig.mock.lastCall![1] as Record<string, unknown>;
+    expect(called.tag).toMatch(/^node-[a-z0-9]{8}-hy2-[a-z0-9]{6}$/);
+    // 后缀每次随机
+    await core.generateConfig('hysteria2', { domain: 'a.com' });
+    const again = cloud.generateConfig.mock.lastCall![1] as Record<string, unknown>;
+    expect(again.tag).not.toBe(called.tag);
+    // 节点名 slugify：空格/大写归一
+    core.updateAppConfig({ node_name: 'Tokyo 01' });
+    await core.generateConfig('vless-reality-vision', {});
+    const slugged = cloud.generateConfig.mock.lastCall![1] as Record<string, unknown>;
+    expect(slugged.tag).toMatch(/^tokyo-01-vless-[a-z0-9]{6}$/);
+    core.updateAppConfig({ node_name: '' });
   });
 
   it('getIdentity：无 node_name 时回退 node-<fp8>；isInitialized 需要 token+node_name', () => {

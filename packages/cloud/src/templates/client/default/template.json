@@ -31,8 +31,7 @@
       },
       {
         "tag": "dns-local",
-        "type": "https",
-        "server": "223.5.5.5"
+        "type": "local"
       }
     ],
     "rules": [
@@ -303,6 +302,24 @@
       {
         "ip_is_private": true,
         "outbound": "direct"
+      },
+      {
+        "type": "logical",
+        "mode": "and",
+        "rules": [
+          {
+            "ip_version": 6
+          },
+          {
+            "invert": true,
+            "interface_address": {
+              "en0": [
+                "2000::/3"
+              ]
+            }
+          }
+        ],
+        "action": "reject"
       },
       {
         "domain": [

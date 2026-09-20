@@ -145,6 +145,10 @@ vi.mock('@chorus/core', () => {
     getFingerprint(): string {
       return 'fp-test'
     }
+    /** Mirrors the real core wrapper: render via cloud, tag passthrough. */
+    async generateConfig(type: string, params: unknown) {
+      return this.cloud.generateConfig(type, params)
+    }
     getIdentity() {
       const cfg = this.store.loadAppConfig()
       return {

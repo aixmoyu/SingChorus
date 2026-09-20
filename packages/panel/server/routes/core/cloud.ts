@@ -54,7 +54,7 @@ router.post('/cloud/generate', (req, res) => {
   }
   const core = getCore()
   const { type, params } = parsed.data
-  void core.cloud
+  void core
     .generateConfig(type, params)
     .then((result) => res.json(result))
     .catch((err) => {

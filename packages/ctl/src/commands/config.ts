@@ -54,7 +54,7 @@ configCommand
       }
 
       const cfgName = opts.name || paramDict['tag'] || type;
-      const result = await core.cloud.generateConfig(type, paramDict);
+      const result = await core.generateConfig(type, paramDict);
       const entry = core.createConfig({
         name: cfgName,
         node: opts.node,
