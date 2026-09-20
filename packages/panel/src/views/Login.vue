@@ -70,7 +70,10 @@ const error = ref('')
 const passwordInputRef = ref<{ focus: () => void } | null>(null) as Ref<{ focus: () => void } | null>
 
 onMounted(async () => {
-  if (!auth.checked) await auth.checkStatus()
+  // Always re-verify against the server — a stale store (e.g. isAuthenticated
+  // set by a setup/login call whose cookie the browser then dropped) used to
+  // bounce straight back to /setup and form an infinite login↔setup loop.
+  await auth.checkStatus()
   if (auth.isAuthenticated) {
     router.push({ name: auth.initialized ? 'dashboard' : 'setup' })
     return

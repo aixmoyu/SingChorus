@@ -98,7 +98,7 @@ export async function changePassword(oldPassword: string, newPassword: string): 
   return true
 }
 
-export function issueToken(res: Response): string {
+export function issueToken(req: Request, res: Response): string {
   const cfg = loadConfig()
   const token = jwt.sign({ sub: 'admin', ts: Date.now(), ver: cfg.token_version || 0 }, cfg.jwt_secret, {
     expiresIn: TOKEN_TTL_SECONDS,
@@ -108,21 +108,25 @@ export function issueToken(res: Response): string {
     // `strict` in production prevents the cookie from being sent on
     // cross-site navigations; `lax` in dev keeps OAuth-style redirects working.
     sameSite: isProduction ? 'strict' : 'lax',
-    // Only transmit over HTTPS in production — localhost dev stays on HTTP.
-    secure: isProduction,
+    // Per-request, not per-build: `req.secure` is true for direct TLS and for
+    // trusted-proxy-terminated HTTPS (CHORUS_PANEL_TRUST_PROXY + X-Forwarded-Proto).
+    // Keying this off NODE_ENV alone broke plain-HTTP production deployments —
+    // the browser silently drops a Secure cookie received over HTTP, turning
+    // every login into an invisible 401 loop.
+    secure: req.secure,
     maxAge: TOKEN_TTL_SECONDS * 1000,
     path: '/',
   })
   return token
 }
 
-export function clearToken(res: Response): void {
+export function clearToken(req: Request, res: Response): void {
   // Mirror the cookie options used in `issueToken` so the browser reliably
   // matches the cookie to delete.
   res.clearCookie(TOKEN_COOKIE, {
     httpOnly: true,
     sameSite: isProduction ? 'strict' : 'lax',
-    secure: isProduction,
+    secure: req.secure,
     path: '/',
   })
 }

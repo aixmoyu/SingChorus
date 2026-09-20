@@ -30,7 +30,15 @@ http.interceptors.response.use(
     const url: string = err.config?.url || ''
     const isAuthEndpoint = url.startsWith('/auth/')
     if (err.response?.status === 401 && !isAuthEndpoint && _router) {
-      _router.push({ name: 'login' })
+      const current = _router.currentRoute.value.name
+      // Loop breaker: login/setup own their own auth state (both re-verify
+      // with a fresh status check on mount). Navigating away from them on a
+      // background 401 lets login bounce back to setup on stale store state
+      // and setup 401 back to login — an infinite redirect loop that hammers
+      // /api/init when the session cookie is broken or expired.
+      if (current !== 'login' && current !== 'setup') {
+        _router.push({ name: 'login' })
+      }
     }
     return Promise.reject(err)
   },

@@ -134,17 +134,23 @@ const finishing = ref(false)
 const finishError = ref('')
 
 onMounted(async () => {
-  if (!auth.checked) await auth.checkStatus()
-  if (auth.isAuthenticated) {
-    // Load existing identity values (e.g. when re-running setup after login).
-    try {
-      await init.fetchInit()
-      fingerprint.value = init.fingerprint
-      nodeName.value = init.nodeName
-      nodeAddress.value = init.nodeAddress
-      cloudUrl.value = init.cloudUrl
-    } catch { /* wizard still usable with defaults */ }
+  // Fresh server truth, never the store's optimistic state: this page issues
+  // authenticated calls (/api/init) on mount, so a stale isAuthenticated
+  // (session cookie dropped/expired) must send the user to login instead of
+  // letting every call 401 into the interceptor.
+  await auth.checkStatus()
+  if (!auth.isAuthenticated) {
+    router.push({ name: 'login' })
+    return
   }
+  // Load existing identity values (e.g. when re-running setup after login).
+  try {
+    await init.fetchInit()
+    fingerprint.value = init.fingerprint
+    nodeName.value = init.nodeName
+    nodeAddress.value = init.nodeAddress
+    cloudUrl.value = init.cloudUrl
+  } catch { /* wizard still usable with defaults */ }
   if (!auth.firstRun) step.value = 2
 })
 

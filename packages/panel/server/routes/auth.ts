@@ -72,7 +72,7 @@ router.post('/setup', async (req: AuthedRequest, res) => {
   try {
     await setupAdminPassword(password)
     clearFailures(req)
-    issueToken(res)
+    issueToken(req, res)
     req.log.info({ ip: clientKey(req) }, 'admin password initialized (first run)')
     res.json({ ok: true })
   } catch (err: any) {
@@ -103,13 +103,13 @@ router.post('/login', async (req: AuthedRequest, res) => {
     return
   }
   clearFailures(req)
-  issueToken(res)
+  issueToken(req, res)
   req.log.info({ ip: clientKey(req) }, 'login succeeded')
   res.json({ ok: true })
 })
 
 router.post('/logout', requireAuth, (req: AuthedRequest, res) => {
-  clearToken(res)
+  clearToken(req, res)
   res.json({ ok: true })
 })
 
@@ -134,7 +134,7 @@ router.post('/change-password', requireAuth, async (req: AuthedRequest, res) => 
   clearFailures(req)
   // changePassword bumps the token version, invalidating the caller's current
   // cookie — re-issue a fresh one so the session survives the change.
-  issueToken(res)
+  issueToken(req, res)
   req.log.info('admin password changed')
   res.json({ ok: true })
 })

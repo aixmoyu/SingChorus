@@ -105,9 +105,10 @@ describe('template port verification', () => {
     expect(result.dns.final).toBe('dns-local');
     expect(result.route.final).toBe('proxy');
     expect(result.route.default_domain_resolver).toBe('dns-local');
-    // rule_set count tracks the template's remote rule-set definitions
-    // (games@cn / games@!cn entries were removed from the template).
-    expect(result.route.rule_set).toHaveLength(75);
+    // rule_set must be preserved verbatim from the template — comparing
+    // against the source template (instead of a hardcoded count) keeps this
+    // assertion valid as rule-sets are added/removed in template edits.
+    expect(result.route.rule_set).toEqual((clientTemplate as any).route.rule_set);
 
     // no leftover placeholder tokens
     const json = JSON.stringify(result);
