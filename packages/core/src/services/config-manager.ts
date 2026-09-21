@@ -53,6 +53,10 @@ export class ConfigManager {
   update(name: string, data: Partial<ConfigEntry>): ConfigEntry {
     const existing = this.get(name);
     const merged = { ...existing, ...data, name: existing.name };
+    // Tag（配置名）创建后不可修改：params.tag / client_config.tag 必须与
+    // 原值完全一致（含缺失状态），否则整个更新被拒绝。
+    this.assertTagUnchanged('params.tag', existing.params?.tag, merged.params?.tag);
+    this.assertTagUnchanged('client_config.tag', existing.client_config?.tag, merged.client_config?.tag);
     if (data.server_config || data.client_config || data.params) {
       this.assertNoPortConflict(name, merged);
       const nextHash = computeContentHash(
@@ -72,6 +76,17 @@ export class ConfigManager {
     merged.updated_at = now();
     this.store.saveConfig(merged);
     return merged;
+  }
+
+  /** Tag（配置名）创建后不可修改：任一侧 tag 值（含缺失）不一致即拒绝。 */
+  private assertTagUnchanged(field: string, before: unknown, after: unknown): void {
+    if (before !== after) {
+      throw new AppError(
+        ERRORS.CFG_TAG_IMMUTABLE.code,
+        `${ERRORS.CFG_TAG_IMMUTABLE.message}: '${field}' must stay '${String(before)}'`,
+        ERRORS.CFG_TAG_IMMUTABLE.status,
+      );
+    }
   }
 
   /** Reject a new/changed config whose port collides with another config on this machine. */

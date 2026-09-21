@@ -102,19 +102,29 @@ describe('Protocol Instances API', () => {
     expect(missing.status).toBe(404);
   });
 
-  it('PUT re-renders configs from new params and updates the mirrored tag', async () => {
+  it('PUT re-renders configs from new params but keeps the tag immutable', async () => {
     await createSimpleProtocol('pi-proto5');
     const node = await createNode();
     const instance = await createInstance('pi-proto5', node.id, { domain: 'old.test', tag: 'old-tag' });
 
-    const res = await api(`/api/protocol-instances/${instance.id}`, {
+    // 修改 tag → 拒绝（创建后名字不可改）
+    const rename = await api(`/api/protocol-instances/${instance.id}`, {
       method: 'PUT',
       headers: await adminHeaders(),
       body: JSON.stringify({ params: { domain: 'new.test', tag: 'new-tag' } }),
     });
+    expect(rename.status).toBe(400);
+    expect((await jsonBody(rename)).error.code).toBe('TAG_IMMUTABLE');
+
+    // 保持原 tag → 只更新配置内容
+    const res = await api(`/api/protocol-instances/${instance.id}`, {
+      method: 'PUT',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ params: { domain: 'new.test', tag: 'old-tag' } }),
+    });
     expect(res.status).toBe(200);
     const body = await jsonBody(res);
-    expect(body.instance.tag).toBe('new-tag');
+    expect(body.instance.tag).toBe('old-tag');
     expect(JSON.parse(body.instance.client_config).server).toBe('new.test');
   });
 

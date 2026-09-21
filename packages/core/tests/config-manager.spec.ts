@@ -110,6 +110,25 @@ describe('ConfigManager.update', () => {
     const updated = cm.update('upd-7', { name: 'evil' } as Partial<ConfigEntry>);
     expect(updated.name).toBe('upd-7');
   });
+
+  it('创建后 tag 不可修改（CFG_TAG_IMMUTABLE）：params.tag / client_config.tag 均冻结', () => {
+    cm.add('tag-1', 'default', 'hysteria2', server(9203), { tag: 'fixed-tag' }, { tag: 'fixed-tag', domain: 'a.test' });
+    // 改 params.tag → 拒绝
+    expect(() => cm.update('tag-1', { params: { tag: 'renamed', domain: 'b.test' } }))
+      .toThrowError(errWith('CFG_TAG_IMMUTABLE'));
+    // 改 client_config.tag → 拒绝
+    expect(() => cm.update('tag-1', { client_config: { tag: 'renamed' } }))
+      .toThrowError(errWith('CFG_TAG_IMMUTABLE'));
+    // 删除 tag → 同样视为改名，拒绝
+    expect(() => cm.update('tag-1', { params: { domain: 'b.test' } }))
+      .toThrowError(errWith('CFG_TAG_IMMUTABLE'));
+    // tag 保持不变 → 正常更新内容
+    const updated = cm.update('tag-1', {
+      params: { tag: 'fixed-tag', domain: 'b.test' },
+      client_config: { tag: 'fixed-tag' },
+    });
+    expect(updated.params).toEqual({ tag: 'fixed-tag', domain: 'b.test' });
+  });
 });
 
 describe('ConfigManager.enable / disable', () => {

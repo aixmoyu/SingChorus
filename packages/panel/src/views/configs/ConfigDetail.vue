@@ -14,6 +14,10 @@
         <n-form-item label="Type">
           <n-input :value="form.type" disabled />
         </n-form-item>
+        <n-form-item label="Tag">
+          <n-input :value="form.name" disabled />
+          <template #feedback>Tag cannot be changed after creation — edit the config content only.</template>
+        </n-form-item>
         <n-form-item label="Enabled">
           <n-switch v-model:value="form.enabled" :disabled="isRemote" />
         </n-form-item>

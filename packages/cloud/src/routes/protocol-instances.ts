@@ -98,6 +98,11 @@ protocolInstances.put('/:id', adminAuth, zValidator('json', z.object({
   }
 
   if (body.params) {
+    // Tag（配置名）创建后不可修改：params.tag 必须与原值一致（含缺失状态）。
+    const existingParams = JSON.parse((existing.params as string) || '{}');
+    if (extractTag(body.params) !== extractTag(existingParams)) {
+      return c.json({ error: { code: 'TAG_IMMUTABLE', message: 'Tag cannot be changed after creation' } }, 400);
+    }
     const reg = new PluginRegistry(c.env.DB);
     await reg.loadAll();
     const instance = existing as any;
