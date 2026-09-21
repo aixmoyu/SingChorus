@@ -5,6 +5,8 @@ import { adminAuth } from '../auth/middleware';
 
 const upsertSchema = z.object({
   config: z.record(z.unknown()),
+  server_config: z.record(z.unknown()).optional(),
+  params: z.record(z.unknown()).optional(),
   protocol_type: z.string().min(1),
   content_hash: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -25,6 +27,8 @@ interface ClientConfigRow {
   fingerprint: string;
   name: string;
   config: string;
+  server_config: string;
+  params: string;
   protocol_type: string;
   content_hash: string;
   enabled: number;
@@ -56,6 +60,8 @@ function toFullRecord(row: ClientConfigRow): Record<string, unknown> {
     name: row.name,
     fingerprint: row.fingerprint,
     config: JSON.parse(row.config),
+    server_config: safeParse(row.server_config),
+    params: safeParse(row.params),
     protocol_type: row.protocol_type,
     content_hash: row.content_hash,
     enabled: Boolean(row.enabled),
@@ -64,6 +70,17 @@ function toFullRecord(row: ClientConfigRow): Record<string, unknown> {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+/** server_config/params may be absent on rows created before they existed. */
+function safeParse(json: string | undefined | null): Record<string, unknown> {
+  if (!json) return {};
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 // List all clients across every node (metadata-only: 1 indexed query, no bodies).
@@ -109,7 +126,7 @@ clients.get('/:fingerprint', adminAuth, async (c) => {
       'SELECT 1 AS ok FROM nodes WHERE fingerprint = ?',
     ).bind(fingerprint).first();
     const { results } = await c.env.DB.prepare(
-      `SELECT fingerprint, name, config, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
+      `SELECT fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
        FROM client_configs WHERE fingerprint = ? ORDER BY updated_at DESC LIMIT ?`,
     ).bind(fingerprint, MAX_ROWS).all<ClientConfigRow>();
 
@@ -127,9 +144,9 @@ clients.get('/:fingerprint', adminAuth, async (c) => {
 clients.get('/:fingerprint/:name', adminAuth, async (c) => {
   const { fingerprint, name } = c.req.param();
   const row = await c.env.DB.prepare(
-    `SELECT fingerprint, name, config, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
-     FROM client_configs WHERE fingerprint = ? AND name = ?`,
-  ).bind(fingerprint, name).first<ClientConfigRow>();
+      `SELECT fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
+       FROM client_configs WHERE fingerprint = ? AND name = ?`,
+    ).bind(fingerprint, name).first<ClientConfigRow>();
   if (!row) {
     return c.json({ error: { code: 'CLIENT_NOT_FOUND', message: `Client '${name}' not found` } }, 404);
   }
@@ -139,7 +156,9 @@ clients.get('/:fingerprint/:name', adminAuth, async (c) => {
 // Upsert a client owned by the given node.
 clients.put('/:fingerprint/:name', adminAuth, zValidator('json', upsertSchema), async (c) => {
   const { fingerprint, name } = c.req.param();
-  const { config, protocol_type, content_hash, enabled, deployed } = c.req.valid('json');
+  const { config, server_config, params, protocol_type, content_hash, enabled, deployed } = c.req.valid('json');
+  const serverConfigJson = JSON.stringify(server_config ?? {});
+  const paramsJson = JSON.stringify(params ?? {});
 
   const now = new Date().toISOString();
   const tag = extractTag(config);
@@ -198,10 +217,10 @@ clients.put('/:fingerprint/:name', adminAuth, zValidator('json', upsertSchema), 
     if (prev) {
       await c.env.DB.prepare(
         `UPDATE client_configs
-         SET config = ?, protocol_type = ?, content_hash = ?, enabled = ?, deployed = ?, port = ?, tag = ?, updated_at = ?
+         SET config = ?, server_config = ?, params = ?, protocol_type = ?, content_hash = ?, enabled = ?, deployed = ?, port = ?, tag = ?, updated_at = ?
          WHERE fingerprint = ? AND name = ?`,
       ).bind(
-        JSON.stringify(config), protocol_type, record.content_hash,
+        JSON.stringify(config), serverConfigJson, paramsJson, protocol_type, record.content_hash,
         record.enabled ? 1 : 0, record.deployed ? 1 : 0, port, tag, now,
         fingerprint, name,
       ).run();
@@ -210,10 +229,10 @@ clients.put('/:fingerprint/:name', adminAuth, zValidator('json', upsertSchema), 
 
     await c.env.DB.prepare(
       `INSERT INTO client_configs
-         (fingerprint, name, config, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      fingerprint, name, JSON.stringify(config), protocol_type, record.content_hash,
+      fingerprint, name, JSON.stringify(config), serverConfigJson, paramsJson, protocol_type, record.content_hash,
       record.enabled ? 1 : 0, record.deployed ? 1 : 0, port, tag, now, now,
     ).run();
     return c.json({ client: record }, 201);

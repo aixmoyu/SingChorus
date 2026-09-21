@@ -50,6 +50,32 @@ export class ConfigManager {
     return entry;
   }
 
+  /**
+   * Restore a config pulled back from the cloud (reinstall recovery).
+   * Skips when a local config with the same name already exists — local
+   * edits always win. `deployed` resets to false: after a reinstall the
+   * underlying service no longer runs until the config is re-deployed.
+   */
+  restore(input: {
+    name: string
+    type: string
+    server_config: Record<string, unknown>
+    client_config: Record<string, unknown>
+    params: Record<string, unknown>
+    enabled?: boolean
+  }): 'restored' | 'skipped' {
+    if (this.store.configExists(input.name)) return 'skipped';
+    this.assertNoPortConflict(input.name, input);
+    const entry = makeEntry(
+      input.name, '', input.type,
+      input.server_config, input.client_config, input.params,
+      input.enabled ?? true,
+    );
+    this.store.saveConfig(entry);
+    this.markSynced(input.name);
+    return 'restored';
+  }
+
   update(name: string, data: Partial<ConfigEntry>): ConfigEntry {
     const existing = this.get(name);
     const merged = { ...existing, ...data, name: existing.name };

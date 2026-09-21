@@ -17,6 +17,11 @@ const registerNodeSchema = z.object({
   address: z.string().optional(),
 });
 
+const rebindNodeSchema = z.object({
+  from: z.string().min(8).max(128),
+  to: z.string().min(8).max(128),
+});
+
 const updateNodeSchema = z.object({
   name: z.string().min(1).max(128).optional(),
   hostname: z.string().optional(),
@@ -56,6 +61,71 @@ nodes.post('/register', adminAuth, zValidator('json', registerNodeSchema), async
      WHERE fingerprint = ? RETURNING *`
   ).bind(name, address || null, now, fingerprint).first<Record<string, unknown>>();
   return c.json({ node: updated });
+});
+
+/**
+ * Rebind a node's identity: move the nodes row and all client_configs from
+ * the `from` fingerprint to the `to` fingerprint. Recovery path after an OS
+ * reinstall generated a new fingerprint — configs synced back to the node
+ * under its new identity instead of being orphaned under the old one.
+ *
+ * Refuses when the target fingerprint already owns client_configs; clean up
+ * (or re-register a fresh node) first so the move is unambiguous. The batch
+ * is atomic — either the configs and the node row move together or neither.
+ */
+nodes.post('/rebind', adminAuth, zValidator('json', rebindNodeSchema), async (c) => {
+  const { from, to } = c.req.valid('json');
+  if (from === to) {
+    return c.json({ error: { code: 'BAD_FINGERPRINT', message: 'Source and target fingerprints are identical' } }, 400);
+  }
+
+  const source = await c.env.DB.prepare(
+    'SELECT * FROM nodes WHERE fingerprint = ?',
+  ).bind(from).first<Record<string, unknown>>();
+  if (!source) {
+    return c.json({ error: { code: 'NODE_NOT_FOUND', message: `Node '${from}' not found` } }, 404);
+  }
+
+  const targetRow = await c.env.DB.prepare(
+    'SELECT id FROM nodes WHERE fingerprint = ?',
+  ).bind(to).first<{ id: string }>();
+
+  const occupied = await c.env.DB.prepare(
+    'SELECT 1 AS ok FROM client_configs WHERE fingerprint = ? LIMIT 1',
+  ).bind(to).first();
+  if (occupied) {
+    return c.json({
+      error: {
+        code: 'TARGET_FINGERPRINT_IN_USE',
+        message: `Target node '${to}' already owns configs — resolve them before rebinding`,
+      },
+    }, 409);
+  }
+
+  const now = new Date().toISOString();
+  const statements = [
+    c.env.DB.prepare(
+      'UPDATE client_configs SET fingerprint = ?, updated_at = ? WHERE fingerprint = ?',
+    ).bind(to, now, from),
+    // Subscription delivery cache may reference moved configs — invalidate it.
+    c.env.DB.prepare('DELETE FROM sub_delivery_cache'),
+  ];
+  if (targetRow) {
+    // The reinstalled node already heartbeat under the new fingerprint:
+    // keep that row (fresh last_seen/name) and drop the stale source row.
+    statements.push(c.env.DB.prepare('DELETE FROM nodes WHERE fingerprint = ?').bind(from));
+  } else {
+    statements.push(
+      c.env.DB.prepare('UPDATE nodes SET fingerprint = ? WHERE fingerprint = ?').bind(to, from),
+    );
+  }
+  await c.env.DB.batch(statements);
+
+  const moved = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM client_configs WHERE fingerprint = ?',
+  ).bind(to).first<{ n: number }>();
+
+  return c.json({ success: true, moved_configs: moved?.n ?? 0 });
 });
 
 nodes.get('/', adminAuth, async (c) => {

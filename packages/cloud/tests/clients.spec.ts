@@ -108,4 +108,24 @@ describe('Clients API — domain semantics', () => {
     expect(del.status).toBe(200);
     expect(await tagOwner('new-tag')).toBeNull();
   });
+
+  it('server_config/params round-trip (reinstall recovery needs the full config)', async () => {
+    await putClient('fp-full', 'cfg', {
+      config: { tag: 'rt-1' },
+      server_config: { type: 'vless', listen_port: 9001 },
+      params: { uuid: 'u1' },
+    });
+    const res = await api('/api/clients/fp-full/cfg', { headers: await adminHeaders() });
+    const client = (await jsonBody(res)).client;
+    expect(client.server_config).toEqual({ type: 'vless', listen_port: 9001 });
+    expect(client.params).toEqual({ uuid: 'u1' });
+
+    // Rows written without server_config/params degrade to {} (pre-column data).
+    const bare = await putClient('fp-full', 'bare', { config: { tag: 'rt-2' } });
+    expect(bare.status).toBe(201);
+    const pulled = await api('/api/clients/fp-full/bare', { headers: await adminHeaders() });
+    const bareClient = (await jsonBody(pulled)).client;
+    expect(bareClient.server_config).toEqual({});
+    expect(bareClient.params).toEqual({});
+  });
 });

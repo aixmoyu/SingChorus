@@ -312,3 +312,73 @@ describe('ChorusCore 远端配置管理', () => {
     expect(core.store.loadRemoteConfig('fp-x', 'dr-2')).not.toBeNull();
   });
 });
+
+describe('ChorusCore 重装恢复（指纹 + 云端配置回拉）', () => {
+  it('importFingerprint：合法指纹落盘生效；非法指纹拒绝（INVALID_FINGERPRINT）', () => {
+    const original = core.getFingerprint();
+    const fp = core.importFingerprint('recovered-fp-0123456789');
+    expect(fp).toBe('recovered-fp-0123456789');
+    expect(core.getFingerprint()).toBe('recovered-fp-0123456789');
+    // 前后空白被 trim
+    expect(core.importFingerprint('  abcd1234  ')).toBe('abcd1234');
+    expect(() => core.importFingerprint('short')).toThrowError(expect.objectContaining({ code: 'INVALID_FINGERPRINT' }));
+    expect(() => core.importFingerprint('bad fp!')).toThrowError(expect.objectContaining({ code: 'INVALID_FINGERPRINT' }));
+    // 恢复原指纹，避免污染后续用例
+    core.importFingerprint(original);
+  });
+
+  it('CHORUS_FINGERPRINT 环境变量覆盖并持久化（重装后一次性声明身份）', () => {
+    const original = core.getFingerprint();
+    process.env.CHORUS_FINGERPRINT = 'env-fp-0123456789';
+    try {
+      expect(core.getFingerprint()).toBe('env-fp-0123456789');
+    } finally {
+      delete process.env.CHORUS_FINGERPRINT;
+    }
+    // env 撤销后沿用已持久化的值，不回退随机生成
+    expect(core.getFingerprint()).toBe('env-fp-0123456789');
+    core.importFingerprint(original);
+  });
+
+  it('restoreFromCloud：云端配置拉回本地并标记 synced；本地同名条目优先保留', async () => {
+    cloud.getNodeClients.mockResolvedValue([
+      {
+        name: 'rest-1', config: { type: 'vless', server_port: 9001 },
+        server_config: { type: 'vless', listen_port: 9001 }, params: { uuid: 'u' },
+        protocol_type: 'vless', content_hash: 'h1', enabled: true, deployed: true,
+      },
+      { name: 'rest-2', config: { type: 'hy2' }, protocol_type: 'hysteria2', content_hash: 'h2', enabled: false },
+    ]);
+    core.createConfig({ name: 'rest-2', type: 'hysteria2', server_config: { type: 'hysteria2', listen_port: 9111 } });
+
+    const res = await core.restoreFromCloud();
+    expect(res.restored).toEqual(['rest-1']);
+    expect(res.skipped).toEqual(['rest-2']);
+
+    const restored = core.configs.get('rest-1');
+    expect(restored.synced).toBe(true);
+    expect(restored.deployed).toBe(false); // 重装后服务未运行，需重新部署
+    expect(restored.server_config).toEqual({ type: 'vless', listen_port: 9001 });
+    expect(restored.params).toEqual({ uuid: 'u' });
+    expect(core.configs.get('rest-2').server_config.listen_port).toBe(9111);
+
+    core.configs.delete('rest-1');
+    core.configs.delete('rest-2');
+    cloud.getNodeClients.mockResolvedValue([]);
+  });
+
+  it('本地为空且云端仍有本节点配置 → 跳过删除对账（防重装窗口误清云端）', async () => {
+    const fp = core.getFingerprint();
+    for (const e of core.configs.listAll()) core.configs.delete(e.name);
+    cloud.deleteNodeClient.mockClear();
+    cloud.getClients.mockResolvedValue([
+      { name: 'cloud-1', fingerprint: fp, content_hash: 'x', enabled: true, deployed: false },
+    ]);
+
+    const res = await core.syncAllToCloud();
+    expect(cloud.deleteNodeClient).not.toHaveBeenCalled();
+    expect(res.deleted).toBe(0);
+
+    cloud.getClients.mockResolvedValue([]);
+  });
+});

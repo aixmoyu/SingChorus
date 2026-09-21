@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS client_configs (
   fingerprint TEXT NOT NULL,
   name TEXT NOT NULL,
   config TEXT NOT NULL,
+  server_config TEXT NOT NULL DEFAULT '{}',
+  params TEXT NOT NULL DEFAULT '{}',
   protocol_type TEXT NOT NULL,
   content_hash TEXT NOT NULL DEFAULT '',
   enabled INTEGER NOT NULL DEFAULT 1,

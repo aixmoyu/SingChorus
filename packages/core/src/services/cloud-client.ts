@@ -356,6 +356,8 @@ export class CloudClient {
     name: string
     fingerprint: string
     config: Record<string, unknown>
+    server_config?: Record<string, unknown>
+    params?: Record<string, unknown>
     protocol_type: string
     content_hash: string
     enabled: boolean
@@ -366,6 +368,8 @@ export class CloudClient {
       path: `/api/clients/${encodeURIComponent(data.fingerprint)}/${encodeURIComponent(data.name)}`,
       body: {
         config: data.config,
+        server_config: data.server_config ?? {},
+        params: data.params ?? {},
         protocol_type: data.protocol_type,
         content_hash: data.content_hash,
         enabled: data.enabled,
@@ -417,6 +421,28 @@ export class CloudClient {
       const err = resp.data?.error || {};
       throw new AppError('CLOUD_UNREACHABLE', err.message || `Node registration failed: ${resp.status}`, 502);
     }
+  }
+
+  /**
+   * Rebind a node's identity in the cloud: move the nodes row and all
+   * client_configs from the old fingerprint to the new one (reinstall
+   * recovery — the old configs become owned by this node again).
+   */
+  async rebindNode(from: string, to: string): Promise<number> {
+    const resp = await this.request({
+      method: 'POST',
+      path: '/api/nodes/rebind',
+      body: { from, to },
+    });
+    if (resp.status >= 400) {
+      const err = resp.data?.error || {};
+      throw new AppError(
+        err.code || 'CLOUD_REBIND_FAILED',
+        err.message || `Node rebind failed: ${resp.status}`,
+        502,
+      );
+    }
+    return Number(resp.data?.moved_configs ?? 0);
   }
 
   /** List all nodes known to the cloud. */

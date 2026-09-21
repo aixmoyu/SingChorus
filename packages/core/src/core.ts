@@ -85,6 +85,14 @@ export class ChorusCore {
     return this.store.getFingerprint();
   }
 
+  /**
+   * Adopt a previous fingerprint (reinstall recovery): the cloud keeps
+   * recognizing this node under its old identity so configs sync back.
+   */
+  importFingerprint(fp: string): string {
+    return this.store.importFingerprint(fp);
+  }
+
   /** Current node identity: fingerprint + configured name/address. */
   getIdentity(): NodeIdentity {
     const cfg = this.store.loadAppConfig();
@@ -141,6 +149,8 @@ export class ChorusCore {
       name: entry.name,
       fingerprint: identity.fingerprint,
       config: entry.client_config,
+      server_config: entry.server_config,
+      params: entry.params,
       protocol_type: entry.type,
       content_hash: entry.content_hash,
       enabled: entry.enabled,
@@ -214,6 +224,8 @@ export class ChorusCore {
           name: entry.name,
           fingerprint: identity.fingerprint,
           config: entry.client_config,
+          server_config: entry.server_config,
+          params: entry.params,
           protocol_type: entry.type,
           content_hash: entry.content_hash,
           enabled: entry.enabled,
@@ -232,15 +244,27 @@ export class ChorusCore {
     // 3. Reconcile deletes: cloud entries with no local counterpart are stale —
     //    removed locally and never pushed back, so the subscription endpoint
     //    (which reads all client configs) stops serving them.
-    const localNames = new Set(this.configs.listAll().map((e) => e.name));
-    for (const name of Array.from(cloudMap.keys())) {
-      if (localNames.has(name)) continue;
-      try {
-        await this.cloud.deleteNodeClient(identity.fingerprint, name);
-        deleted++;
-      } catch (err) {
-        // best-effort; retried on next sync since the entry stays in the cloud
-        this.logger.warn('sync: delete in cloud failed', { config: name, error: err instanceof Error ? err.message : String(err) });
+    //    Guard: a freshly reinstalled node has an empty local store — deleting
+    //    there would wipe the cloud copies before restoreFromCloud() can bring
+    //    them back. Skip with a warning; explicit deletes still work because
+    //    they leave at least one config locally (guard requires a fully empty
+    //    store).
+    if (this.configs.listAll().length === 0 && cloudMap.size > 0) {
+      this.logger.warn(
+        'sync: local store is empty while the cloud still has this node\'s configs — delete-reconcile skipped (reinstall? run restore)',
+        { cloud_configs: cloudMap.size },
+      );
+    } else {
+      const localNames = new Set(this.configs.listAll().map((e) => e.name));
+      for (const name of Array.from(cloudMap.keys())) {
+        if (localNames.has(name)) continue;
+        try {
+          await this.cloud.deleteNodeClient(identity.fingerprint, name);
+          deleted++;
+        } catch (err) {
+          // best-effort; retried on next sync since the entry stays in the cloud
+          this.logger.warn('sync: delete in cloud failed', { config: name, error: err instanceof Error ? err.message : String(err) });
+        }
       }
     }
 
@@ -274,6 +298,41 @@ export class ChorusCore {
       }
     }));
     return { synced, skipped, pulled, deleted, failures };
+  }
+
+  /**
+   * Reinstall recovery: pull this node's own configs back down from the
+   * cloud into the local (editable) store. Local entries always win —
+   * existing names are skipped. Restored entries are marked synced and
+   * deployed=false (the service must be re-deployed after a reinstall).
+   */
+  async restoreFromCloud(): Promise<{ restored: string[]; skipped: string[] }> {
+    const identity = this.getIdentity();
+    const cloudClients = await this.cloud.getNodeClients(identity.fingerprint);
+    const restored: string[] = [];
+    const skipped: string[] = [];
+    for (const c of cloudClients) {
+      const name = String(c.name ?? '');
+      if (!name) continue;
+      try {
+        const outcome = this.configs.restore({
+          name,
+          type: String(c.protocol_type ?? ''),
+          server_config: (c.server_config && typeof c.server_config === 'object' ? c.server_config : {}) as Record<string, unknown>,
+          client_config: (c.config && typeof c.config === 'object' ? c.config : {}) as Record<string, unknown>,
+          params: (c.params && typeof c.params === 'object' ? c.params : {}) as Record<string, unknown>,
+          enabled: c.enabled === undefined ? true : Boolean(c.enabled),
+        });
+        if (outcome === 'restored') restored.push(name);
+        else skipped.push(name);
+      } catch (err) {
+        // Port conflicts etc. — surface per-config instead of aborting the batch.
+        this.logger.warn('restore: config import failed', { config: name, error: err instanceof Error ? err.message : String(err) });
+        skipped.push(name);
+      }
+    }
+    this.logger.info('restore: pulled own configs from cloud', { restored: restored.length, skipped: skipped.length });
+    return { restored, skipped };
   }
 
   /** Convert a cloud client record into a read-only remote ConfigEntry. */

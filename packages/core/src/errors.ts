@@ -17,4 +17,5 @@ export const ERRORS = {
   DEPLOY_FAILED:    { code: 'DEPLOY_FAILED',     message: 'Deployment failed',           status: 500 },
   CLOUD_UNREACHABLE:  { code: 'CLOUD_UNREACHABLE',   message: 'Cloud service unreachable',  status: 503 },
   CLOUD_GENERATE_FAILED: { code: 'CLOUD_GENERATE_FAILED', message: 'Config generation failed', status: 502 },
+  INVALID_FINGERPRINT: { code: 'INVALID_FINGERPRINT', message: 'Fingerprint must be 8-128 chars of letters, digits, "_" or "-"', status: 422 },
 } as const;

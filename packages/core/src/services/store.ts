@@ -4,6 +4,7 @@ import { randomUUID, randomBytes, createHash } from 'crypto';
 import type { ConfigEntry, AppConfig } from '../schemas/config.js';
 import { LockTimeoutError, withFileLockSync } from './lock.js';
 import { consoleLogger, type Logger } from '../logger.js';
+import { AppError, ERRORS } from '../errors.js';
 
 const DATA_DIR = join(process.env.HOME || '/tmp', '.singchorus', 'data');
 const CONFIGS_DIR = join(DATA_DIR, 'configs');
@@ -50,6 +51,19 @@ function loadJson<T>(filePath: string): T | null {
 
 function corruptStamp() {
   return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+/** Fingerprint charset guard — loose enough for user-chosen ids, strict
+ *  enough to survive round-trips through URLs and file storage. */
+export function isValidFingerprint(fp: string): boolean {
+  return /^[A-Za-z0-9_-]{8,128}$/.test(fp);
+}
+
+/** Read the persisted fingerprint without creating one (empty when absent). */
+function readStableFingerprint(): string {
+  try {
+    return readFileSync(FINGERPRINT_FILE, 'utf-8').trim();
+  } catch { return '' }
 }
 
 /**
@@ -275,24 +289,59 @@ export class LocalStore {
    * Get the stable machine fingerprint, generating one on first use.
    * The fingerprint is a random 32-hex-char value persisted in the data dir —
    * it survives restarts and stays constant for the lifetime of the install.
+   *
+   * CHORUS_FINGERPRINT overrides (and re-persists over) the stored value, so a
+   * reinstalled machine can reclaim its previous identity by setting the env
+   * var once; every process afterwards reads the restored value from disk.
    */
   getFingerprint(): string {
     this.init();
-    try {
-      const existing = readFileSync(FINGERPRINT_FILE, 'utf-8').trim();
-      if (existing) return existing;
-    } catch { /* not created yet */ }
+    const fromEnv = process.env.CHORUS_FINGERPRINT?.trim();
+    if (fromEnv && isValidFingerprint(fromEnv)) {
+      const stored = readStableFingerprint();
+      if (stored === fromEnv) return fromEnv;
+      // 锁内写：panel/ctl 双进程可能同时带着 env 启动，写入需互斥。
+      this.locked(() => {
+        if (readStableFingerprint() === fromEnv) return;
+        atomicWrite(FINGERPRINT_FILE, fromEnv);
+        try { chmodSync(FINGERPRINT_FILE, 0o600) } catch { /* best-effort */ }
+      });
+      return fromEnv;
+    }
+    const existing = readStableFingerprint();
+    if (existing) return existing;
     // 锁内生成：避免双进程同时发现文件缺失、各自生成不同指纹（core-R2）。
     return this.locked(() => {
-      try {
-        const existing = readFileSync(FINGERPRINT_FILE, 'utf-8').trim();
-        if (existing) return existing;
-      } catch { /* not created yet */ }
+      const existing = readStableFingerprint();
+      if (existing) return existing;
       const fp = randomBytes(16).toString('hex');
       atomicWrite(FINGERPRINT_FILE, fp);
       try { chmodSync(FINGERPRINT_FILE, 0o600) } catch { /* best-effort */ }
       return fp;
     });
+  }
+
+  /**
+   * Explicitly adopt a fingerprint (reinstall recovery). Validates the format
+   * and overwrites the stored value — the cloud keeps recognizing this node
+   * under its previous identity, letting configs sync back down.
+   */
+  importFingerprint(fp: string): string {
+    this.init();
+    const trimmed = fp.trim();
+    if (!isValidFingerprint(trimmed)) {
+      throw new AppError(
+        ERRORS.INVALID_FINGERPRINT.code,
+        `${ERRORS.INVALID_FINGERPRINT.message}: got '${trimmed.slice(0, 128)}'`,
+        ERRORS.INVALID_FINGERPRINT.status,
+      );
+    }
+    if (trimmed === readStableFingerprint()) return trimmed;
+    this.locked(() => {
+      atomicWrite(FINGERPRINT_FILE, trimmed);
+      try { chmodSync(FINGERPRINT_FILE, 0o600) } catch { /* best-effort */ }
+    });
+    return trimmed;
   }
 
   // --- Remote configs (owned by other machines, read-only locally) ---

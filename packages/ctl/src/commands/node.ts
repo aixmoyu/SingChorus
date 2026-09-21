@@ -56,3 +56,44 @@ nodeCommand
       fail(err.message);
     }
   });
+
+nodeCommand
+  .command('import')
+  .description('导入既有指纹（重装恢复：让云端继续识别本节点为原节点）')
+  .argument('<fingerprint>', '重装前记录的节点指纹（8-128 位字母/数字/_/-）')
+  .action((fingerprint: string) => {
+    const core = new ChorusCore();
+    try {
+      const fp = core.importFingerprint(fingerprint);
+      printOk({ fingerprint: fp }, '指纹已导入，节点身份恢复为原节点');
+    } catch (err: any) {
+      fail(err.message);
+    }
+  });
+
+nodeCommand
+  .command('restore')
+  .description('从云端拉回本节点的全部配置（重装恢复；本地同名配置保留不动）')
+  .action(async () => {
+    const core = new ChorusCore();
+    if (!core.isInitialized()) {
+      fail('节点尚未初始化（缺少 node_name 或 cloud_token），请先完成初始化');
+    }
+    try {
+      const result = await core.restoreFromCloud();
+      if (isJson()) {
+        printJson(result);
+      } else {
+        console.log(`\n\x1b[32m\u2705 \u6062\u590d\u5b8c\u6210\x1b[0m`);
+        console.log(`  \u4ece\u4e91\u7aef\u62c9\u56de: ${result.restored.length} \u4e2a\u914d\u7f6e`);
+        if (result.restored.length) console.log(`    ${result.restored.join(', ')}`);
+        if (result.skipped.length) {
+          console.log(`  \u8df3\u8fc7\uff08\u672c\u5730\u5df2\u5b58\u5728\u6216\u5bfc\u5165\u5931\u8d25\uff09: ${result.skipped.length} \u4e2a`);
+          console.log(`    ${result.skipped.join(', ')}`);
+        }
+        console.log('  \u63d0\u793a: \u6062\u590d\u7684\u914d\u7f6e\u9700\u91cd\u65b0\u90e8\u7f72\u540e\u624d\u4f1a\u91cd\u65b0\u51fa\u73b0\u5728\u8ba2\u9605\u4e2d');
+      }
+    } catch (err: any) {
+      fail(err.message);
+    }
+  });

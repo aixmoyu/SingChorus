@@ -31,7 +31,8 @@ export const useInitStore = defineStore('init', () => {
     cloud_url: string
     cloud_token: string
     cloud_required?: boolean
-  }): Promise<{ initialized: boolean; cloud_ok: boolean; cloud_error?: string }> {
+    previous_fingerprint?: string
+  }): Promise<{ initialized: boolean; cloud_ok: boolean; cloud_error?: string; rebound?: boolean; restored?: number }> {
     const res = await http.post('/init', data)
     initialized.value = true
     return res.data

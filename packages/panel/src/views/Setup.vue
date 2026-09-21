@@ -52,6 +52,13 @@
                 <n-input :value="fingerprint" disabled />
                 <template #feedback>Machine fingerprint — generated locally, used to identify this node</template>
               </n-form-item>
+              <n-form-item label="Previous Fingerprint">
+                <n-input v-model:value="previousFingerprint" placeholder="Optional — e.g. a1b2c3d4e5f6…" clearable />
+                <template #feedback>
+                  Reinstall recovery: paste the fingerprint recorded before the OS reinstall.
+                  The cloud will rebind the old node's configs to this machine so they sync back.
+                </template>
+              </n-form-item>
             </n-form>
             <div class="form-actions">
               <n-button @click="step = 1">Back</n-button>
@@ -93,6 +100,11 @@
               <n-button type="primary" @click="goDashboard">Go to Dashboard</n-button>
             </template>
           </n-result>
+          <n-alert v-if="restoredInfo" type="success" class="step-alert">
+            {{ restoredInfo.rebound
+              ? `Old node rebound — ${restoredInfo.restored} config(s) restored from the cloud. Re-deploy them to bring subscriptions back online.`
+              : 'Fingerprint restored — configs will sync from the cloud automatically.' }}
+          </n-alert>
         </template>
       </div>
     </div>
@@ -125,6 +137,7 @@ const settingPassword = ref(false)
 const nodeName = ref('')
 const nodeAddress = ref('')
 const fingerprint = ref('')
+const previousFingerprint = ref('')
 
 const cloudUrl = ref('')
 const cloudToken = ref('')
@@ -133,6 +146,7 @@ const testResult = ref<boolean | null>(null)
 const testError = ref('')
 const finishing = ref(false)
 const finishError = ref('')
+const restoredInfo = ref<{ rebound: boolean; restored: number } | null>(null)
 
 onMounted(async () => {
   // Fresh server truth, never the store's optimistic state: this page issues
@@ -194,12 +208,16 @@ async function finish() {
   finishing.value = true
   finishError.value = ''
   try {
-    await init.completeInit({
+    const res = await init.completeInit({
       node_name: nodeName.value.trim(),
       node_address: nodeAddress.value.trim(),
       cloud_url: cloudUrl.value.trim(),
       cloud_token: cloudToken.value.trim(),
+      ...(previousFingerprint.value.trim() ? { previous_fingerprint: previousFingerprint.value.trim() } : {}),
     })
+    restoredInfo.value = previousFingerprint.value.trim()
+      ? { rebound: res.rebound === true, restored: res.restored ?? 0 }
+      : null
     auth.initialized = true
     step.value = 4
   } catch (e: unknown) {
