@@ -61,7 +61,8 @@ describe('401 redirect interceptor', () => {
 
   beforeEach(() => {
     push = vi.fn()
-    setRouter({ push } as never)
+    // The loop breaker reads currentRoute.value.name — stub it as a real router would.
+    setRouter({ push, currentRoute: { value: { name: 'dashboard' } } } as never)
   })
 
   it('redirects to login on a 401 from a protected endpoint', async () => {

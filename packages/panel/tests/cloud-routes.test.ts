@@ -35,7 +35,6 @@ const h = vi.hoisted(() => {
     getAllSyncStatuses: undefined as (() => unknown) | undefined,
     generateServerConfig: undefined as (() => unknown) | undefined,
     generateSubscription: undefined as (() => unknown) | undefined,
-    validate: undefined as ((config: unknown) => unknown) | undefined,
     deploy: undefined as (() => unknown) | undefined,
     deployStatus: undefined as (() => unknown) | undefined,
     stopDeploy: undefined as (() => unknown) | undefined,
@@ -185,9 +184,6 @@ vi.mock('@chorus/core', () => {
     async generateSubscription() {
       return h.behavior.generateSubscription ? h.behavior.generateSubscription() : {}
     }
-    async validate(config: unknown) {
-      return h.behavior.validate ? h.behavior.validate(config) : { valid: true, errors: [] }
-    }
     async deploy() {
       h.behavior.calls.push('deploy')
       if (h.behavior.deploy) return h.behavior.deploy()
@@ -236,7 +232,7 @@ vi.mock('@chorus/core', () => {
 
 const authed = (req: request.Test, cookie: string) => req.set('Cookie', cookie)
 
-describe('cloud/deploy/validate routes against a stubbed core', () => {
+describe('cloud/deploy routes against a stubbed core', () => {
   let app: Application
   let cookie: string
 
@@ -255,7 +251,7 @@ describe('cloud/deploy/validate routes against a stubbed core', () => {
       'registerNode', 'listSubscriptions', 'getSubscription', 'createSubscription',
       'updateSubscription', 'deleteSubscription', 'deleteNodeClient', 'listRemoteConfigs',
       'loadRemoteConfig', 'deleteRemoteConfig', 'getAllSyncStatuses', 'generateServerConfig',
-      'generateSubscription', 'validate', 'deploy', 'deployStatus', 'stopDeploy',
+      'generateSubscription', 'deploy', 'deployStatus', 'stopDeploy',
       'restartDeploy', 'deployLogs',
     ]) {
       ;(h.behavior as Record<string, unknown>)[key] = undefined
@@ -622,57 +618,5 @@ describe('cloud/deploy/validate routes against a stubbed core', () => {
     }
     const bad = await authed(request(app).get('/api/core/logs?tail=5'), cookie)
     expect(bad.status).toBe(503)
-  })
-
-  // --- validate ---
-
-  it('validates ad-hoc configs and never 5xxs on upstream failure', async () => {
-    const missing = await authed(request(app).post('/api/core/validate'), cookie).send({})
-    expect(missing.status).toBe(422)
-    expect(missing.body).toEqual({ valid: false, errors: ['config is required'] })
-
-    h.behavior.validate = (config) => ({ valid: false, errors: [`bad: ${JSON.stringify(config)}`] })
-    const bad = await authed(request(app).post('/api/core/validate'), cookie)
-      .send({ config: { x: 1 } })
-    expect(bad.status).toBe(200)
-    expect(bad.body).toEqual({ valid: false, errors: ['bad: {"x":1}'] })
-
-    h.behavior.validate = () => {
-      throw new Error('plugin exploded')
-    }
-    const thrown = await authed(request(app).post('/api/core/validate'), cookie)
-      .send({ config: {} })
-    expect(thrown.status).toBe(200)
-    expect(thrown.body).toEqual({ valid: false, errors: ['plugin exploded'] })
-  })
-
-  it('validates a stored config side and degrades unknown names to valid:false', async () => {
-    await authed(request(app).post('/api/core/configs'), cookie)
-      .send({ name: 'v1', node: 'n', type: 't', server_config: { s: 1 }, client_config: { c: 1 }, params: {} })
-
-    const seen: Array<unknown> = []
-    h.behavior.validate = (config) => {
-      seen.push(config)
-      return { valid: true, errors: [] }
-    }
-    await authed(request(app).post('/api/core/validate/entry/v1?side=client'), cookie)
-    await authed(request(app).post('/api/core/validate/entry/v1'), cookie)
-    expect(seen).toEqual([{ c: 1 }, { s: 1 }])
-
-    const missing = await authed(request(app).post('/api/core/validate/entry/ghost'), cookie)
-    expect(missing.status).toBe(200)
-    expect(missing.body).toEqual({ valid: false, errors: ['Configuration not found'] })
-  })
-
-  it('validates merged/subscription generation, degrading CFG_NONE_ENABLED to valid:false', async () => {
-    const ok = await authed(request(app).post('/api/core/validate/merged'), cookie)
-    expect(ok.body).toEqual({ valid: true, errors: [] })
-
-    h.behavior.generateSubscription = () => {
-      throw coreErr(400, 'CFG_NONE_ENABLED', 'No enabled configs to deploy')
-    }
-    const bad = await authed(request(app).post('/api/core/validate/subscription'), cookie)
-    expect(bad.status).toBe(200)
-    expect(bad.body).toEqual({ valid: false, errors: ['No enabled configs to deploy'] })
   })
 })

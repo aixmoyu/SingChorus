@@ -47,12 +47,6 @@ export interface DeployStatus {
   started_at?: string
 }
 
-export interface ValidateResult {
-  valid: boolean
-  errors?: string[]
-  warnings?: string[]
-}
-
 export interface Subscription {
   id: string
   name: string

@@ -16,7 +16,6 @@ const router = createRouter({
         { path: 'configs/create', name: 'config-create', component: () => import('@/views/configs/ConfigCreate.vue') },
         { path: 'configs/:name', name: 'config-detail', component: () => import('@/views/configs/ConfigDetail.vue') },
         { path: 'deploy', name: 'deploy', component: () => import('@/views/Deploy.vue') },
-        { path: 'validate', name: 'validate', component: () => import('@/views/Validate.vue') },
         { path: 'templates', name: 'templates', component: () => import('@/views/Templates.vue') },
         { path: 'subscriptions', name: 'subscriptions', component: () => import('@/views/Subscriptions.vue') },
         { path: 'subscriptions/create', name: 'subscription-create', component: () => import('@/views/SubscriptionCreate.vue') },

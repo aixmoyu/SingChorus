@@ -176,9 +176,8 @@ Environment variables:
 | `/dashboard` | Stats overview + recent configs |
 | `/configs` | Config list with enable/disable/delete |
 | `/configs/create` | 3-step config creation wizard |
-| `/configs/:name` | Config detail with JSON editors + validation |
+| `/configs/:name` | Config detail with JSON editors |
 | `/deploy` | Deploy/restart/stop + log viewer |
-| `/validate` | Multi-mode validation (Entry/Merged/Subscription/Generic) |
 | `/templates` | Protocol template cards with schema details |
 | `/subscriptions` | Enabled client configs + subscription validation |
 | `/settings` | Node identity, cloud connection, system information, password change |

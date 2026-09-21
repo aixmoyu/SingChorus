@@ -54,7 +54,6 @@
           :disabled="isRemote"
         />
         <div class="form-actions">
-          <n-button size="small" @click="validateEntry('server')" v-if="!isRemote">Validate Server</n-button>
           <n-button size="small" @click="formatJson('server')">Format</n-button>
         </div>
       </div>
@@ -72,7 +71,6 @@
           :disabled="isRemote"
         />
         <div class="form-actions">
-          <n-button size="small" @click="validateEntry('client')" v-if="!isRemote">Validate Client</n-button>
           <n-button size="small" @click="formatJson('client')">Format</n-button>
         </div>
       </div>
@@ -86,45 +84,29 @@
         </template>
       </n-result>
     </n-card>
-
-    <n-modal v-model:show="showResult" title="Validation Result" :mask-closable="false">
-      <n-card class="modal-card" closable @close="showResult = false">
-        <n-tag :type="validationResult?.valid ? 'success' : 'error'">{{ validationResult?.valid ? 'Valid' : 'Invalid' }}</n-tag>
-        <n-ul v-if="validationResult?.errors?.length">
-          <n-li v-for="(e, i) in validationResult?.errors" :key="`err-${i}`">{{ e }}</n-li>
-        </n-ul>
-        <n-ul v-if="validationResult?.warnings?.length">
-          <n-li v-for="(w, i) in validationResult?.warnings" :key="`warn-${i}`">{{ w }}</n-li>
-        </n-ul>
-      </n-card>
-    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
-import { NCard, NForm, NFormItem, NInput, NSwitch, NButton, NSpin, NTag, NModal, NUl, NLi, NResult, useMessage, useDialog } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInput, NSwitch, NButton, NSpin, NTag, NResult, useMessage, useDialog } from 'naive-ui'
 import { useConfigStore } from '@/stores/config'
 import { useTemplateStore } from '@/stores/template'
-import { useValidationStore } from '@/stores/validation'
 import { extractApiError } from '@/lib/http'
 import http from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
-import type { ConfigEntry, ValidateResult } from '@/lib/types'
+import type { ConfigEntry } from '@/lib/types'
 
 const message = useMessage()
 const dialog = useDialog()
 const route = useRoute()
 const configStore = useConfigStore()
 const templateStore = useTemplateStore()
-const validationStore = useValidationStore()
 const { labelPlacement } = useFormLabelPlacement()
 
 const original = ref<ConfigEntry | null>(null)
 const form = ref<ConfigEntry | null>(null)
-const showResult = ref(false)
-const validationResult = ref<ValidateResult | null>(null)
 const loadError = ref<string | null>(null)
 const saving = ref(false)
 const regenerating = ref(false)
@@ -181,16 +163,6 @@ async function regenerate() {
     message.error(extractApiError(e, 'Regenerate failed').message)
   } finally {
     regenerating.value = false
-  }
-}
-
-async function validateEntry(side: 'server' | 'client') {
-  if (!original.value) return
-  try {
-    validationResult.value = await validationStore.validateEntry(original.value.name, side)
-    showResult.value = true
-  } catch (e: unknown) {
-    message.error(extractApiError(e, 'Validation failed').message)
   }
 }
 
