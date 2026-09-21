@@ -1,27 +1,37 @@
 import { Command } from 'commander';
 import { ChorusCore } from '@chorus/core';
-import { loadCtlConfig } from '../config.js';
-import { printDeployStatus } from '../utils.js';
+import { isJson } from '../config.js';
+import { fail, printJson, printDeployStatus, printOk } from '../utils.js';
 
 export const deployCommand = new Command('deploy')
   .description('管理 Docker 部署');
 
+/**
+ * 部署状态变化（deploy/stop）后尽力同步一次：订阅端立即反映 deployed
+ * 集合的变化（与 panel 的 triggerSync 行为对齐）。云端不可达时只警告，
+ * 不让同步失败掩盖部署本身的成功。
+ */
+async function syncAfterDeployChange(core: ChorusCore) {
+  try {
+    await core.syncAllToCloud();
+  } catch (err: any) {
+    const msg = `部署状态已变更，但同步到云端失败（定时同步会重试）: ${err.message}`;
+    if (isJson()) printJson({ warning: msg });
+    else console.error(`\x1b[33m\u26a0 ${msg}\x1b[0m`);
+  }
+}
+
 deployCommand
   .command('up')
-  .description('部署/更新节点')
+  .description('部署/更新节点（渲染云端模板并启动容器）')
   .action(async () => {
     const core = new ChorusCore();
-    const cfg = loadCtlConfig();
     try {
       await core.deploy();
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ status: 'deployed' }));
-      } else {
-        console.log(`\x1b[32m\u2705 \u90e8\u7f72\u5b8c\u6210\x1b[0m`);
-      }
+      printOk({ status: 'deployed' }, '部署完成');
+      await syncAfterDeployChange(core);
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
@@ -30,17 +40,12 @@ deployCommand
   .description('停止容器')
   .action(async () => {
     const core = new ChorusCore();
-    const cfg = loadCtlConfig();
     try {
       await core.stopDeploy();
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ status: 'stopped' }));
-      } else {
-        console.log(`\x1b[32m\u2705 \u5df2\u505c\u6b62\x1b[0m`);
-      }
+      printOk({ status: 'stopped' }, '已停止');
+      await syncAfterDeployChange(core);
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
@@ -49,17 +54,11 @@ deployCommand
   .description('重启容器')
   .action(async () => {
     const core = new ChorusCore();
-    const cfg = loadCtlConfig();
     try {
       await core.restartDeploy();
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ status: 'restarted' }));
-      } else {
-        console.log(`\x1b[32m\u2705 \u5df2\u91cd\u542f\x1b[0m`);
-      }
+      printOk({ status: 'restarted' }, '已重启');
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
@@ -68,13 +67,10 @@ deployCommand
   .description('查看部署状态')
   .action(async () => {
     const core = new ChorusCore();
-    const cfg = loadCtlConfig();
     try {
-      const s = await core.deployStatus();
-      printDeployStatus({ status: s }, cfg);
+      printDeployStatus({ status: await core.deployStatus() });
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
@@ -84,17 +80,13 @@ deployCommand
   .option('-t, --tail <lines>', '显示行数', '50')
   .action(async (opts: { tail: string }) => {
     const core = new ChorusCore();
-    const cfg = loadCtlConfig();
     const tail = parseInt(opts.tail, 10) || 50;
+    if (tail <= 0) fail(`无效行数 '${opts.tail}'，需要正整数`);
     try {
       const logsText = await core.deployLogs(tail);
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ logs: logsText }));
-      } else {
-        console.log(logsText);
-      }
+      if (isJson()) printJson({ logs: logsText });
+      else console.log(logsText);
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });

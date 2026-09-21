@@ -1,61 +1,49 @@
 import { Command } from 'commander';
 import { ChorusCore } from '@chorus/core';
-import { loadCtlConfig } from '../config.js';
-import { printConfigs, printConfigDetail, printTemplates } from '../utils.js';
+import { isJson } from '../config.js';
+import { fail, parseParams, printConfigs, printConfigDetail, printTemplates, printJson, printOk, confirm } from '../utils.js';
 
 export const configCommand = new Command('config')
   .description('管理本地配置');
+
+function getCore(): ChorusCore {
+  return new ChorusCore();
+}
 
 configCommand
   .command('list')
   .description('列出所有配置')
   .action(() => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
+    const core = getCore();
     try {
-      const configs = core.configs.listAll();
-      printConfigs(configs, cfg);
+      printConfigs(core.configs.listAll());
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
 configCommand
   .command('add')
-  .description('添加新配置')
+  .description('添加新配置（通过云端模板渲染）')
   .argument('<type>', '协议类型')
   .argument('[params...]', '参数 key=value')
-  .option('-n, --name <name>', '配置名称')
+  .option('-n, --name <name>', '配置名称（默认取 tag 参数或协议类型）')
   .option('--node <node>', '节点名称', 'default')
-  .action(async (type: string, params: string[], opts: { name?: string; node: string }) => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
+  .option('--disabled', '创建后保持禁用')
+  .action(async (type: string, params: string[], opts: { name?: string; node: string; disabled?: boolean }) => {
+    const core = getCore();
     try {
       const templates = await core.cloud.getTemplates();
       const tmpl = templates.find((t: any) => t.type === type || t.name === type);
       if (!tmpl) {
-        console.error(`\x1b[31m\u672a\u77e5\u534f\u8bae\u7c7b\u578b: ${type}\x1b[0m`);
-        console.error('可用类型:');
-        for (const t of templates) {
-          console.error(`  ${t.type} (${t.name})`);
-        }
-        process.exit(1);
+        const available = templates.map((t: any) => `  ${t.type} (${t.name})`).join('\n');
+        fail(`未知协议类型: ${type}`, `可用类型:\n${available}`);
       }
 
-      const paramDict: Record<string, string> = {};
-      for (const p of params) {
-        const eqIdx = p.indexOf('=');
-        if (eqIdx > 0) {
-          paramDict[p.slice(0, eqIdx)] = p.slice(eqIdx + 1);
-        } else {
-          console.warn(`\x1b[33m\u8df3\u8fc7\u65e0\u6548\u53c2\u6570: ${p}\x1b[0m`);
-        }
-      }
-
+      const paramDict = parseParams(params);
       const cfgName = opts.name || paramDict['tag'] || type;
       const result = await core.generateConfig(type, paramDict);
-      const entry = core.createConfig({
+      core.createConfig({
         name: cfgName,
         node: opts.node,
         type,
@@ -63,110 +51,162 @@ configCommand
         client_config: result.client_config,
         params: { ...paramDict },
       });
+      if (opts.disabled) core.configs.disable(cfgName);
 
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify(entry, null, 2));
-      } else {
-        console.log(`\x1b[32m\u2705 \u914d\u7f6e '${cfgName}' \u5df2\u521b\u5efa\x1b[0m`);
-      }
+      printOk(core.configs.get(cfgName), `配置 '${cfgName}' 已创建${opts.disabled ? '（禁用状态）' : ''}`);
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
 configCommand
-  .command('remove')
+  .command('update <name>')
+  .description('更新配置（节点 / 参数；参数变更后重新渲染配置内容）')
+  .option('--node <node>', '迁移到其他节点名称')
+  .option('--param <pairs...>', '参数覆盖 key=value（与现有参数合并）')
+  .action(async (name: string, opts: { node?: string; param?: string[] }) => {
+    const core = getCore();
+    try {
+      const existing = core.configs.get(name);
+      const data: Record<string, unknown> = {};
+      let params = existing.params || {};
+
+      if (opts.node) data.node = opts.node;
+
+      if (opts.param && opts.param.length > 0) {
+        params = { ...params, ...parseParams(opts.param) };
+        data.params = params;
+        // 参数变化后配置内容已过期：走云端重新渲染 server/client config，
+        // 与 panel 的 create/update 语义保持一致（内容与参数不脱节）。
+        const result = await core.generateConfig(existing.type, params);
+        data.server_config = result.server_config;
+        data.client_config = result.client_config;
+      }
+
+      if (Object.keys(data).length === 0) {
+        fail('未指定任何更新内容（可用 --node / --param）');
+      }
+      const entry = core.configs.update(name, data as Parameters<typeof core.configs.update>[1]);
+      printOk(entry, `配置 '${name}' 已更新`);
+    } catch (err: any) {
+      fail(err.message);
+    }
+  });
+
+configCommand
+  .command('remove <name>')
   .description('删除配置')
-  .argument('<name>', '配置名称')
   .option('-y, --yes', '跳过确认')
-  .action((name: string, opts: { yes?: boolean }) => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
-    if (!opts.yes) {
-      console.log(`确认删除配置 '${name}'? 使用 -y 强制删除`);
-      process.exit(0);
-    }
+  .action(async (name: string, opts: { yes?: boolean }) => {
+    const core = getCore();
     try {
-      core.configs.delete(name);
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ deleted: true, name }));
-      } else {
-        console.log(`\x1b[32m\u2705 \u914d\u7f6e '${name}' \u5df2\u5220\u9664\x1b[0m`);
+      core.configs.get(name); // 不存在时报 CFG_NOT_FOUND，而不是误报删除成功
+      if (!opts.yes) {
+        const ok = await confirm(`确认删除配置 '${name}'? (y/N) `);
+        if (!ok) fail(`已取消。非交互环境请使用 -y 跳过确认`);
       }
+      core.configs.delete(name);
+      printOk({ deleted: name }, `配置 '${name}' 已删除`);
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
 configCommand
-  .command('show')
+  .command('show <name>')
   .description('查看配置详情')
-  .argument('<name>', '配置名称')
   .action((name: string) => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
+    const core = getCore();
     try {
-      const config = core.configs.get(name);
-      printConfigDetail(config, cfg);
+      printConfigDetail(core.configs.get(name));
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
 configCommand
-  .command('enable')
+  .command('enable <name>')
   .description('启用配置')
-  .argument('<name>', '配置名称')
   .action((name: string) => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
+    const core = getCore();
     try {
       core.configs.enable(name);
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ enabled: true, name }));
-      } else {
-        console.log(`\x1b[32m\u2705 \u914d\u7f6e '${name}' \u5df2\u542f\u7528\x1b[0m`);
-      }
+      printOk(core.configs.get(name), `配置 '${name}' 已启用`);
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
 
 configCommand
-  .command('disable')
+  .command('disable <name>')
   .description('禁用配置')
-  .argument('<name>', '配置名称')
   .action((name: string) => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
+    const core = getCore();
     try {
       core.configs.disable(name);
-      if (cfg.jsonOutput) {
-        console.log(JSON.stringify({ disabled: true, name }));
-      } else {
-        console.log(`\x1b[32m\u2705 \u914d\u7f6e '${name}' \u5df2\u7981\u7528\x1b[0m`);
+      printOk(core.configs.get(name), `配置 '${name}' 已禁用`);
+    } catch (err: any) {
+      fail(err.message);
+    }
+  });
+
+configCommand
+  .command('check-tag <tag>')
+  .description('检查 tag 是否可用（本地 + 云端全节点）')
+  .action(async (tag: string) => {
+    const core = getCore();
+    try {
+      const tagOf = (e: { client_config?: { tag?: unknown } }) => String(e.client_config?.tag ?? '');
+      const localConflict =
+        core.configs.listAll().some((e) => tagOf(e) === tag) ||
+        core.listRemoteConfigs().some((e) => tagOf(e) === tag);
+      if (localConflict) {
+        if (isJson()) printJson({ tag, available: false, source: 'local' });
+        else console.error(`\x1b[31m\u26d4 tag '${tag}' \u5df2\u88ab\u672c\u5730\u914d\u7f6e\u5360\u7528\x1b[0m`);
+        process.exit(1);
+      }
+      const available = await core.cloud.checkTagAvailable(tag);
+      if (isJson()) printJson({ tag, available });
+      else if (available) console.log(`\x1b[32m\u2705 tag '${tag}' \u53ef\u7528\x1b[0m`);
+      else {
+        console.error(`\x1b[31m\u26d4 tag '${tag}' \u5df2\u88ab\u4e91\u7aef\u5176\u4ed6\u8282\u70b9\u5360\u7528\x1b[0m`);
+        process.exit(1);
       }
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      // 云端不可达时降级为仅本地检查（与 panel check-tag 语义一致），
+      // 但要显式说明远端检查被跳过，避免给出误导性的「可用」结论。
+      if (isJson()) printJson({ tag, available: true, source: 'local_only', detail: err.message });
+      else console.log(`\x1b[33m\u26a0 \u4e91\u7aef\u4e0d\u53ef\u8fbe\uff0c\u4ec5\u672c\u5730\u68c0\u67e5: tag '${tag}' \u53ef\u7528\uff08${err.message}\uff09\x1b[0m`);
     }
+  });
+
+configCommand
+  .command('check-port <port>')
+  .description('检查本机监听端口是否与已有配置冲突')
+  .action((port: string) => {
+    const core = getCore();
+    const p = Number(port);
+    if (!Number.isInteger(p) || p <= 0 || p > 65535) {
+      fail(`无效端口 '${port}'，需要 1-65535 的整数`);
+    }
+    const conflict = core.configs.listAll().find((e) => {
+      const lp = Number(e.server_config?.listen_port ?? e.client_config?.server_port);
+      return Number.isInteger(lp) && lp === p;
+    });
+    if (isJson()) printJson({ port: p, available: !conflict, conflictWith: conflict?.name ?? null });
+    else if (!conflict) console.log(`\x1b[32m\u2705 \u7aef\u53e3 ${p} \u53ef\u7528\x1b[0m`);
+    else console.error(`\x1b[31m\u26d4 \u7aef\u53e3 ${p} \u4e0e\u914d\u7f6e '${conflict.name}' \u51b2\u7a81\x1b[0m`);
+    if (conflict) process.exit(1);
   });
 
 configCommand
   .command('templates')
   .description('列出可用协议模板')
   .action(async () => {
-    const core = new ChorusCore();
-    const cfg = loadCtlConfig();
+    const core = getCore();
     try {
-      const tmpls = await core.cloud.getTemplates();
-      printTemplates(tmpls, cfg);
+      printTemplates(await core.cloud.getTemplates());
     } catch (err: any) {
-      console.error(`\x1b[31m\u9519\u8bef: ${err.message}\x1b[0m`);
-      process.exit(1);
+      fail(err.message);
     }
   });
