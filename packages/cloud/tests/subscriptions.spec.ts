@@ -304,10 +304,17 @@ describe('Subscription Version Binding (delivery)', () => {
   it('绑定版本与 overall-client 模板冲突 → 400 SBX_VERSION_INCOMPATIBLE', async () => {
     await seed();
     await provisionInstance();
+    // 写路径已预校验（§13.7）——创建时用兼容组合，随后收窄模板 compat，
+    // 交付端保留为最终防线（模板在订阅创建后被编辑的场景）。
     const sub = subBody(await createSub('Incompat', 'incompat-delivery', {
-      singboxVersion: '1.12.0', // 种子 client-default 要求 >=1.14.0
+      singboxVersion: '1.14.1',
       overallTemplateId: 'client-default',
     }));
+    const narrow = await SELF.fetch('http://localhost/api/templates/client-default', {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ singboxCompat: '>=1.15.0' }),
+    });
+    expect(narrow.status).toBe(200);
     const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
     expect(res.status).toBe(400);
     expect((await res.json() as any).error.code).toBe('SBX_VERSION_INCOMPATIBLE');
@@ -352,5 +359,77 @@ describe('Subscription Version Binding (delivery)', () => {
     expect(res.status).toBe(200);
     const body = await jsonBody(res);
     expect(body.versions).toEqual(['1.15.0', '1.14.1']);
+  });
+});
+
+// v2.1（设计 §13.7）：订阅写路径预校验——创建/更新时就拦截注定交付
+// 400/500 的「版本 × 模板」组合，交付端校验仅作模板事后被编辑的最终防线。
+describe('Subscription Pre-Validation (write path)', () => {
+  it('POST 绑定不存在的模板 → 404 TMPL_NOT_FOUND', async () => {
+    const { status, body } = await createSub('Ghost Tmpl', 'ghost-tmpl', {
+      overallTemplateId: 'no-such-tmpl',
+    });
+    expect(status).toBe(404);
+    expect(body.error.code).toBe('TMPL_NOT_FOUND');
+  });
+
+  it('POST 版本与模板 compat 冲突 → 400 SBX_VERSION_INCOMPATIBLE', async () => {
+    await seed();
+    const { status, body } = await createSub('Pre Conflict', 'pre-conflict', {
+      singboxVersion: '1.12.0', // 种子 client-default 要求 >=1.14.0
+      overallTemplateId: 'client-default',
+    });
+    expect(status).toBe(400);
+    expect(body.error.code).toBe('SBX_VERSION_INCOMPATIBLE');
+  });
+
+  it('POST 兼容组合 → 201 正常创建', async () => {
+    await seed();
+    const { status } = await createSub('Pre OK', 'pre-ok', {
+      singboxVersion: '1.14.1',
+      overallTemplateId: 'client-default',
+    });
+    expect(status).toBe(201);
+  });
+
+  it('PUT 版本变更与已绑定模板冲突 → 400（最终值比对）', async () => {
+    await seed();
+    const { body: created } = await createSub('Put Conflict', 'put-conflict', {
+      singboxVersion: '1.14.1',
+      overallTemplateId: 'client-default',
+    });
+    const res = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ singboxVersion: '1.11.0' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json() as any)).error.code).toBe('SBX_VERSION_INCOMPATIBLE');
+  });
+
+  it('PUT 模板变更为不存在 → 404', async () => {
+    await seed();
+    const { body: created } = await createSub('Put Ghost', 'put-ghost');
+    const res = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ overallTemplateId: 'no-such-tmpl' }),
+    });
+    expect(res.status).toBe(404);
+    expect(((await res.json() as any)).error.code).toBe('TMPL_NOT_FOUND');
+  });
+
+  it('PUT 改为兼容组合 / 清空模板 → 200', async () => {
+    await seed();
+    const { body: created } = await createSub('Put OK', 'put-ok', { singboxVersion: '1.14.1' });
+    const bind = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ overallTemplateId: 'client-default' }),
+    });
+    expect(bind.status).toBe(200);
+
+    const unbind = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ overallTemplateId: null, singboxVersion: '1.11.0' }),
+    });
+    expect(unbind.status).toBe(200); // 模板清空后版本不再受 client-default 约束
   });
 });

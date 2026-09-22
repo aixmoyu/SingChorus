@@ -205,6 +205,19 @@ templates.delete('/:id', adminAuth, async (c) => {
   if (!existing) {
     return c.json({ error: { code: 'TMPL_NOT_FOUND', message: `Template '${id}' not found` } }, 404);
   }
+  // 引用检查（设计 §13.7）：被订阅绑定的模板删除后交付端渲染 500 且 FK 约束
+  // 只会抛原始错误——先查引用给出明确的 409。
+  const refs = await c.env.DB.prepare(
+    'SELECT path FROM subscriptions WHERE overall_template_id = ? LIMIT 5'
+  ).bind(id).all<{ path: string }>();
+  if (refs.results && refs.results.length > 0) {
+    return c.json({
+      error: {
+        code: 'TMPL_IN_USE',
+        message: `Template '${id}' is bound by subscription(s) /s/${refs.results.map((r) => r.path).join(', /s/')} — unbind it first`,
+      },
+    }, 409);
+  }
   await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(id).run();
   invalidateTemplateCache(); // CLOUD-P4: deleted templates must not render
   return c.json({ success: true });

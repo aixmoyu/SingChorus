@@ -50,15 +50,16 @@ subscriptionCommand
 subscriptionCommand
   .command('create')
   .description('创建订阅（token 不传时由云端安全随机生成）')
+  .requiredOption('--singbox-version <ver>', '订阅绑定的 sing-box 版本（X.Y.Z，交付端兼容校验依据）')
   .option('-n, --name <name>', '订阅名称')
   .option('-p, --path <path>', '订阅路径（默认自动生成）')
   .option('--token <token>', '自定义访问 token')
   .option('--template <id>', '整体模板 ID')
   .option('--inactive', '创建为停用状态')
-  .action(async (opts: { name?: string; path?: string; token?: string; template?: string; inactive?: boolean }) => {
+  .action(async (opts: { singboxVersion: string; name?: string; path?: string; token?: string; template?: string; inactive?: boolean }) => {
     const core = new ChorusCore();
     try {
-      const data: Record<string, unknown> = {};
+      const data: Record<string, unknown> = { singboxVersion: opts.singboxVersion };
       if (opts.name) data.name = opts.name;
       if (opts.path) data.path = opts.path;
       if (opts.token) data.token = opts.token;
@@ -73,26 +74,28 @@ subscriptionCommand
 
 subscriptionCommand
   .command('update <id>')
-  .description('更新订阅（名称 / 路径 / 模板 / 启停 / 重置 token）')
+  .description('更新订阅（名称 / 路径 / 版本 / 模板 / 启停 / 重置 token）')
   .option('-n, --name <name>', '订阅名称')
   .option('-p, --path <path>', '订阅路径')
+  .option('--singbox-version <ver>', '订阅绑定的 sing-box 版本（X.Y.Z）')
   .option('--template <id>', '整体模板 ID（传 none 清空，恢复默认合并）')
   .option('--active', '启用订阅')
   .option('--inactive', '停用订阅')
   .option('--regenerate-token', '重置访问 token（旧链接立即失效）')
-  .action(async (id: string, opts: { name?: string; path?: string; template?: string; active?: boolean; inactive?: boolean; regenerateToken?: boolean }) => {
+  .action(async (id: string, opts: { name?: string; path?: string; singboxVersion?: string; template?: string; active?: boolean; inactive?: boolean; regenerateToken?: boolean }) => {
     if (opts.active && opts.inactive) fail('--active 与 --inactive 不能同时指定');
     const core = new ChorusCore();
     try {
       const data: Record<string, unknown> = {};
       if (opts.name) data.name = opts.name;
       if (opts.path) data.path = opts.path;
+      if (opts.singboxVersion) data.singboxVersion = opts.singboxVersion;
       if (opts.template) data.overallTemplateId = opts.template === 'none' ? null : opts.template;
       if (opts.active) data.active = true;
       if (opts.inactive) data.active = false;
       if (opts.regenerateToken) data.regenerateToken = true;
       if (Object.keys(data).length === 0) {
-        fail('未指定任何更新内容（可用 --name / --path / --template / --active / --inactive / --regenerate-token）');
+        fail('未指定任何更新内容（可用 --name / --path / --singbox-version / --template / --active / --inactive / --regenerate-token）');
       }
       const sub = await core.updateSubscription(id, data);
       printOk(sub, `订阅 '${sub.name}' 已更新`);

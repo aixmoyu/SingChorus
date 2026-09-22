@@ -124,6 +124,34 @@ describe('POST /api/render/deploy', () => {
     expect(body.composeYaml).toContain('services:');
     expect(typeof body.entrySh).toBe('string');
   });
+
+  // 版本目录一致性（设计 §13.7）：1.14.9 满足 compat（>=1.14.0 <1.16.0）但
+  // 不在 docker 模板 singbox_version enum 内 → 明确的 SBX_VERSION_NOT_OFFERED
+  // 而不是笼统的参数 enum 错误。
+  it('returns 400 SBX_VERSION_NOT_OFFERED when the pinned version is outside the docker template enum', async () => {
+    await seed();
+    const node = await createNode();
+    await createInstance('hysteria2', node.id, { domain: 'enum.example.com', port: 8443 });
+    const list = await jsonBody(
+      await api(`/api/protocol-instances?nodeId=${node.id}`, { headers: await adminHeaders() }),
+    );
+    const instances = list.instances.map((row: any) => ({
+      id: row.id,
+      serverConfig: JSON.parse(row.server_config),
+      clientConfig: JSON.parse(row.client_config),
+    }));
+
+    const res = await api('/api/render/deploy', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ instances, singboxVersion: '1.14.9' }),
+    });
+    expect(res.status).toBe(400);
+    const body = await jsonBody(res);
+    expect(body.error.code).toBe('SBX_VERSION_NOT_OFFERED');
+    expect(body.error.message).toContain('1.14.1');
+    expect(body.error.message).toContain('1.15.0');
+  });
 });
 
 describe('POST /api/render/overall', () => {

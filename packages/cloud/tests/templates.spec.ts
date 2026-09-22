@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
-import { adminHeaders, api, jsonBody } from './helpers';
+import { adminHeaders, api, jsonBody, seed } from './helpers';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
@@ -147,5 +147,35 @@ describe('Templates API', () => {
       headers: await adminHeaders(),
     });
     expect(res.status).toBe(404);
+  });
+
+  // 引用检查（设计 §13.7）：被订阅绑定的模板删除会撞 FK 原始错误 → 409 明确报错
+  it('DELETE template bound by a subscription → 409 TMPL_IN_USE; deletable after unbind', async () => {
+    await seed();
+    const created = await jsonBody(await api('/api/subscriptions', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ name: 'Binder', path: 'binder', singboxVersion: '1.14.1', overallTemplateId: 'client-default' }),
+    }));
+
+    const del = await api('/api/templates/client-default', {
+      method: 'DELETE',
+      headers: await adminHeaders(),
+    });
+    expect(del.status).toBe(409);
+    expect((await jsonBody(del)).error.code).toBe('TMPL_IN_USE');
+
+    const unbind = await api(`/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ overallTemplateId: null }),
+    });
+    expect(unbind.status).toBe(200);
+
+    const delAgain = await api('/api/templates/client-default', {
+      method: 'DELETE',
+      headers: await adminHeaders(),
+    });
+    expect(delAgain.status).toBe(200);
   });
 });

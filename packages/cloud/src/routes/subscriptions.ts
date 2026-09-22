@@ -338,6 +338,31 @@ const singboxVersionSchema = z.string().superRefine((val, ctx) => {
   }
 });
 
+/**
+ * 写路径预校验（设计 §13.7）：订阅绑定模板的存在性 + 版本 compat 在
+ * create/update 时即校验，不让管理员创建一个注定交付 400/500 的订阅。
+ * 交付端校验保留为最终防线（模板可能在订阅创建后被编辑/删除）。
+ * 入参为「更新后的最终值」。overall 模板未绑定（null）→ 简单合并，无需校验。
+ */
+async function validateOverallCompat(
+  env: Env, finalTemplateId: string | null, finalVersion: string,
+): Promise<{ ok: true } | { ok: false; status: 400 | 404; code: string; message: string }> {
+  if (!finalTemplateId) return { ok: true };
+  const tmpl = await env.DB.prepare(
+    "SELECT singbox_compat FROM templates WHERE id = ? AND category IN ('overall-server', 'overall-client', 'overall-docker')",
+  ).bind(finalTemplateId).first<{ singbox_compat: string | null }>();
+  if (!tmpl) {
+    return { ok: false, status: 404, code: 'TMPL_NOT_FOUND', message: `Template '${finalTemplateId}' not found` };
+  }
+  if (!isCompatSatisfied(tmpl.singbox_compat, finalVersion)) {
+    return {
+      ok: false, status: 400, code: 'SBX_VERSION_INCOMPATIBLE',
+      message: `sing-box ${finalVersion} is incompatible with template '${finalTemplateId}' (requires '${tmpl.singbox_compat ?? '*'}')`,
+    };
+  }
+  return { ok: true };
+}
+
 const createSubSchema = z.object({
   name: z.string().max(128).optional(),
   path: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/, 'Path must be lowercase alphanumeric with hyphens'),
@@ -392,6 +417,10 @@ subscriptions.post('/api/subscriptions', adminAuth, zValidator('json', createSub
     return c.json({ error: { code: 'SUB_PATH_RESERVED', message: `Path '${body.path}' is reserved` } }, 400);
   }
 
+  // 预校验（§13.7）：绑定模板存在 + 版本 compat，创建时即报错
+  const pre = await validateOverallCompat(c.env, body.overallTemplateId ?? null, body.singboxVersion);
+  if (!pre.ok) return c.json({ error: { code: pre.code, message: pre.message } }, pre.status);
+
   try {
     await c.env.DB.prepare(
       `INSERT INTO subscriptions (id, name, path, singbox_version, overall_template_id, overall_params, token, active)
@@ -429,6 +458,15 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
   ).bind(id).first<SubscriptionRow | null>();
   if (!existing) {
     return c.json({ error: { code: 'SUB_NOT_FOUND', message: `Subscription '${id}' not found` } }, 404);
+  }
+
+  // 预校验（§13.7）：版本或模板变更时，以「更新后的最终值」比对 compat，
+  // 不让订阅更新成注定交付 400/500 的组合
+  if (body.singboxVersion !== undefined || body.overallTemplateId !== undefined) {
+    const finalTemplateId = body.overallTemplateId !== undefined ? body.overallTemplateId : existing.overall_template_id;
+    const finalVersion = body.singboxVersion !== undefined ? body.singboxVersion : existing.singbox_version;
+    const pre = await validateOverallCompat(c.env, finalTemplateId ?? null, finalVersion);
+    if (!pre.ok) return c.json({ error: { code: pre.code, message: pre.message } }, pre.status);
   }
 
   const sets: string[] = [];
@@ -484,12 +522,16 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
 subscriptions.delete('/api/subscriptions/:id', adminAuth, async (c) => {
   const { id } = c.req.param();
   const existing = await c.env.DB.prepare(
-    'SELECT id FROM subscriptions WHERE id = ?'
-  ).bind(id).first();
+    'SELECT id, path FROM subscriptions WHERE id = ?'
+  ).bind(id).first<{ id: string; path: string }>();
   if (!existing) {
     return c.json({ error: { code: 'SUB_NOT_FOUND', message: `Subscription '${id}' not found` } }, 404);
   }
   await c.env.DB.prepare('DELETE FROM subscriptions WHERE id = ?').bind(id).run();
+  // 已删除订阅的 stale 交付缓存必须同步清掉：D1 宕机期间 serveStaleDelivery
+  // 不查订阅表（查不了），缓存行不删就会继续服务一个不存在的订阅（§13.7）。
+  await c.env.DB.prepare('DELETE FROM sub_delivery_cache WHERE path = ?')
+    .bind(existing.path).run().catch(() => {});
   return c.json({ success: true });
 });
 

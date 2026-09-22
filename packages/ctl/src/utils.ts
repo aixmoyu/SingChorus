@@ -194,12 +194,14 @@ export function printSyncStatuses(statuses: Record<string, string>, failures?: A
 
 export function printSubscription(sub: {
   id?: string; name?: string; path?: string; active?: boolean;
+  singboxVersion?: string;
   overallTemplateId?: string | null; token?: string; createdAt?: string; updatedAt?: string;
 }) {
   if (isJson()) { printJson(sub); return; }
   console.log(`\n\u8ba2\u9605: ${sub.name || ''}`);
   console.log(`  \u8def\u5f84: ${sub.path || ''}`);
   console.log(`  \u72b6\u6001: ${fmtBool(!!sub.active)}`);
+  console.log(`  sing-box \u7248\u672c: ${sub.singboxVersion || '(\u672a\u7ed1\u5b9a)'}`);
   console.log(`  \u6574\u4f53\u6a21\u677f: ${sub.overallTemplateId || '(\u65e0\uff0c\u4f7f\u7528\u9ed8\u8ba4\u5408\u5e76)'}`);
   console.log(`  \u521b\u5efa: ${sub.createdAt || ''}`);
   console.log(`  \u66f4\u65b0: ${sub.updatedAt || ''}`);

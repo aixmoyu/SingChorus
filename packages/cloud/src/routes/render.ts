@@ -151,6 +151,27 @@ render.post('/deploy', adminAuth, async (c) => {
     }
   }
 
+  // 2.5 版本目录一致性（设计 §13.7）：注入版本不在 docker 模板 singbox_version
+  // param 的 enum 内时，参数校验只会报笼统的 enum 错误——这里特判成明确的
+  // SBX_VERSION_NOT_OFFERED 并列出可选版本。模板未声明该 param/enum → 放行。
+  if (effectiveVersion) {
+    const dockerTmpl = reg.getTemplate(dockerOverallId);
+    try {
+      const defs = JSON.parse(dockerTmpl?.params ?? '[]');
+      const verDef = Array.isArray(defs) ? defs.find((p: any) => p?.name === 'singbox_version') : null;
+      if (verDef && Array.isArray(verDef.enum) && verDef.enum.length > 0 && !verDef.enum.includes(effectiveVersion)) {
+        return c.json({
+          error: {
+            code: 'SBX_VERSION_NOT_OFFERED',
+            message:
+              `sing-box ${effectiveVersion} is not offered by docker template '${dockerOverallId}' ` +
+              `(available: ${verDef.enum.join(', ')}). Pick an offered version or add it to the template's singbox_version param enum.`,
+          },
+        }, 400);
+      }
+    } catch { /* malformed params — let renderDocker surface its own error */ }
+  }
+
   // 3. 注入镜像版本：用户值优先于 param default（resolveAndValidate 语义）；
   //    显式生效版本最后合并、覆盖用户同名参数。自定义 docker 模板未声明
   //    singbox_version param 时多余 userParam 被忽略、无副作用。

@@ -594,3 +594,36 @@ v1 的候选版本列表是 panel 前端从 docker 模板 `params[].enum` 挖取
 | §9 "订阅消费端 sing-box 版本对 cloud 不可知" | 不再成立：版本随订阅绑定 |
 | §3.3 `GET /s/:path?version=` | 参数删除 |
 | §5.4 SubscriptionCreate 徽章 / 带版本链接 | 徽章由 §13.5 补齐；带版本链接不再需要（版本在服务端绑定） |
+
+### 13.7 v2.1 闭环加固（2026-09-22 二次审查）
+
+v2 主链路（设版本 → 过滤模板 → 订阅绑版本 → 交付校验 → 生成快照 → drift 标记）
+审查后补齐的缺口：
+
+1. **订阅写路径预校验**：POST/PUT `/api/subscriptions` 对「更新后的最终值」
+   （版本 × overall 模板）即时校验——模板不存在 → 404 `TMPL_NOT_FOUND`，
+   compat 不满足 → 400 `SBX_VERSION_INCOMPATIBLE`。交付端校验保留为最终
+   防线（模板在订阅创建后被编辑/删除的场景）。
+2. **版本目录一致性**：`POST /api/render/deploy` 注入的版本不在 docker 模板
+   `singbox_version` param 的 enum 内时，特判返回 400 `SBX_VERSION_NOT_OFFERED`
+   （列出可选版本），不再落成笼统的参数 enum 错误。模板未声明该 param/enum →
+   放行。
+3. **删除引用检查**：DELETE overall 模板被订阅绑定时 → 409 `TMPL_IN_USE`
+   （FK 原始错误太晦涩）；DELETE 协议被实例引用时 → 409 `PROTO_IN_USE`。
+   解绑/删实例后可删。
+4. **订阅 DELETE 同步清 `sub_delivery_cache`**：停用路径本就清缓存，删除
+   路径补上——D1 宕机时 `serveStaleDelivery` 查不了订阅表，缓存行不删会
+   继续服务一个不存在的订阅。
+5. **ctl 补 `--singbox-version`**：`subscription create` 必填、`update` 可选，
+   `printSubscription` 展示绑定版本。cloud 端版本必填后 ctl 不传即 400。
+6. **ctl 候选版本提示**（可选优化，未实施）：`--singbox-version` 不在目录内时
+   依赖服务端预校验报错回显。
+
+已知边界（接受，不处理）：
+
+- 协议模板 compat 收窄不追溯已部署节点：节点上的 server outbound 仍是旧
+  渲染，交付端排除兜底，下次 deploy 才对齐；cloud 不知道各节点的部署版本。
+- 版本目录缩水后，已绑定旧版本的订阅仍正常交付（绑定值不校验目录），
+  属合理行为。
+- 订阅未绑定 overall 模板（简单合并）时不做 compat 预校验——outbound 级
+  兼容由交付端 instance 排除兜底（§13.2）。

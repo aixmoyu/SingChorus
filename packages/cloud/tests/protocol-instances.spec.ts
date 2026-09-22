@@ -64,6 +64,30 @@ describe('Protocol Instances API', () => {
     expect((await jsonBody(res)).error.code).toBe('PROTO_NOT_FOUND');
   });
 
+  // 引用检查（设计 §13.7）：被实例引用的协议删除会撞 FK 原始错误 → 409 明确报错
+  it('DELETE protocol with instances → 409 PROTO_IN_USE; deletable after instance removal', async () => {
+    await createSimpleProtocol('used-proto');
+    const node = await createNode();
+    const instance = await createInstance('used-proto', node.id, { domain: 'x.test' });
+
+    const del = await api('/api/protocols/used-proto', {
+      method: 'DELETE',
+      headers: await adminHeaders(),
+    });
+    expect(del.status).toBe(409);
+    expect((await jsonBody(del)).error.code).toBe('PROTO_IN_USE');
+
+    await api(`/api/protocol-instances/${instance.id}`, {
+      method: 'DELETE',
+      headers: await adminHeaders(),
+    });
+    const delAgain = await api('/api/protocols/used-proto', {
+      method: 'DELETE',
+      headers: await adminHeaders(),
+    });
+    expect(delAgain.status).toBe(200);
+  });
+
   it('rejects invalid create bodies (missing fields / wrong types)', async () => {
     const res = await api('/api/protocol-instances', {
       method: 'POST',

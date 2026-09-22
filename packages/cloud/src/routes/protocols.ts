@@ -125,6 +125,19 @@ protocols.delete('/:id', adminAuth, async (c) => {
   if (!existing) {
     return c.json({ error: { code: 'PROTO_NOT_FOUND', message: `Protocol '${id}' not found` } }, 404);
   }
+  // 引用检查（设计 §13.7）：被协议实例引用的协议删除会撞 FK 原始错误——
+  // 先查引用给出明确的 409。
+  const refs = await c.env.DB.prepare(
+    'SELECT node_id FROM protocol_instances WHERE protocol_id = ? LIMIT 5'
+  ).bind(id).all<{ node_id: string }>();
+  if (refs.results && refs.results.length > 0) {
+    return c.json({
+      error: {
+        code: 'PROTO_IN_USE',
+        message: `Protocol '${id}' has ${refs.results.length}+ instance(s) on node(s) ${refs.results.map((r) => r.node_id).join(', ')} — delete its instances first`,
+      },
+    }, 409);
+  }
   await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(id).run();
   invalidateTemplateCache(); // CLOUD-P4: deleted protocols must not render
   return c.json({ success: true });
