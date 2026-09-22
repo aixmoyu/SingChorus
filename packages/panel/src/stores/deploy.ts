@@ -18,12 +18,12 @@ export const useDeployStore = defineStore('deploy', () => {
     deployStatus.value = res.data
   }
 
-  async function deploy(): Promise<void> {
+  async function deploy(params: { serverOverallId?: string } = {}): Promise<void> {
     loading.value = true
     try {
       // Deploy includes image pull + health-check polling (up to ~2 min),
       // so it needs a longer timeout than the http client default.
-      await http.post('/core/deploy', null, { timeout: 150_000 })
+      await http.post('/core/deploy', params, { timeout: 150_000 })
     } finally {
       loading.value = false
     }

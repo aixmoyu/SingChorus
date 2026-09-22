@@ -12,6 +12,15 @@
             {{ deployStatusText }}
           </n-tag>
         </div>
+        <n-form-item label="Server Template" :show-feedback="false">
+          <n-select
+            v-model:value="serverTemplateId"
+            :options="serverTemplateOptions"
+            :loading="templateStore.loading"
+            clearable
+            placeholder="Default (cloud server template)"
+          />
+        </n-form-item>
         <div class="button-row">
           <n-button type="primary" :loading="busy" :disabled="lifecycleLocked" @click="handleDeploy">Deploy</n-button>
           <n-button type="warning" :loading="busy" :disabled="busy || deployStore.deployStatus?.status !== 'running'" @click="handleRestart">Restart</n-button>
@@ -36,14 +45,24 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NCard, NTag, NButton, NCode, NSpin, useMessage } from 'naive-ui'
+import { NCard, NTag, NButton, NCode, NFormItem, NSelect, NSpin, useMessage } from 'naive-ui'
 import { useDeployStore } from '@/stores/deploy'
+import { useTemplateStore } from '@/stores/template'
 import { extractApiError } from '@/lib/http'
 
 const deployStore = useDeployStore()
+const templateStore = useTemplateStore()
 const message = useMessage()
 let pollTimer: ReturnType<typeof setInterval> | null = null
 const logContainerRef = ref<HTMLElement | null>(null)
+
+/** Selected cloud server overall template; empty = cloud default. */
+const serverTemplateId = ref<string | null>(null)
+const serverTemplateOptions = computed(() =>
+  templateStore.templates
+    .filter((t) => t.role === 'server')
+    .map((t) => ({ label: t.name, value: t.id })),
+)
 
 /** True while a deploy/stop/restart request is in flight. */
 const busy = ref(false)
@@ -69,7 +88,12 @@ const deployStatusText = computed(() => {
 })
 const logText = computed(() => deployStore.logs.join('\n'))
 
-async function handleDeploy() { await runAction(() => deployStore.deploy(), 'Deploy failed') }
+async function handleDeploy() {
+  await runAction(
+    () => deployStore.deploy(serverTemplateId.value ? { serverOverallId: serverTemplateId.value } : {}),
+    'Deploy failed',
+  )
+}
 async function handleRestart() { await runAction(() => deployStore.restartDeploy(), 'Restart failed') }
 async function handleStop() { await runAction(() => deployStore.stopDeploy(), 'Stop failed') }
 async function refreshLogs() {
@@ -128,6 +152,7 @@ onMounted(async () => {
     await deployStore.fetchDeployStatus()
     await deployStore.fetchLogs(100)
   } catch { /* core may be unreachable on first load */ }
+  templateStore.fetchTemplates('server').catch(() => { /* selector stays empty */ })
   startPolling()
 })
 

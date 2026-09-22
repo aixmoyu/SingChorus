@@ -419,8 +419,10 @@ export class ChorusCore {
   /** Deploy the enabled configs. The server config and docker compose are
    *  rendered by the cloud from its templates — same source of truth as
    *  subscriptions. No local fallback: if the cloud can't render, deploy
-   *  fails loudly instead of silently serving a stale local config. */
-  async deploy() {
+   *  fails loudly instead of silently serving a stale local config.
+   *  `serverOverallId` / `dockerOverallId` select non-default overall
+   *  templates on the cloud; omitted ids fall back to the cloud defaults. */
+  async deploy(options: { serverOverallId?: string; dockerOverallId?: string } = {}) {
     const enabled = this.configs.listEnabled();
     if (enabled.length === 0) {
       throw new AppError(ERRORS.CFG_NONE_ENABLED.code, ERRORS.CFG_NONE_ENABLED.message, ERRORS.CFG_NONE_ENABLED.status);
@@ -432,7 +434,7 @@ export class ChorusCore {
       clientConfig: e.client_config,
     }));
 
-    const rendered = await this.cloud.renderDeploy(instances);
+    const rendered = await this.cloud.renderDeploy(instances, options);
     await this.docker.deployRendered(rendered.serverConfig, rendered.composeYaml, rendered.entrySh);
     // 部署成功：本批 enabled 配置进入部署集合（其余条目自动清出），随后由
     // panel 触发同步，把 deployed 状态上报云端供订阅过滤。

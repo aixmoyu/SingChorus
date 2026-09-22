@@ -1,19 +1,31 @@
 import { Router } from 'express'
+import { z } from 'zod'
 import { requireAuth } from '../../auth.js'
 import { getCore, triggerSync } from '../../core-provider.js'
-import { toErrorEnvelope } from '../../api-error.js'
+import { toErrorEnvelope, toValidationError } from '../../api-error.js'
 import { toCoreError } from './helpers.js'
 
 const router = Router()
 router.use(requireAuth)
 
+const deploySchema = z.object({
+  // Optional overall template ids — omitted ids fall back to the cloud defaults.
+  serverOverallId: z.string().min(1).optional(),
+  dockerOverallId: z.string().min(1).optional(),
+})
+
 // --- Deploy ---
 
 router.post('/deploy', async (req, res) => {
+  const parsed = deploySchema.safeParse(req.body ?? {})
+  if (!parsed.success) {
+    res.status(422).json(toErrorEnvelope('VALIDATION_ERROR', toValidationError(parsed.error)))
+    return
+  }
   const core = getCore()
   const startedAt = Date.now()
   try {
-    await core.deploy()
+    await core.deploy(parsed.data)
     // 部署成功改变了 deployed 集合：自动同步，让订阅端立即反映新可见性。
     triggerSync()
     req.log.info({ durationMs: Date.now() - startedAt }, 'deploy succeeded')

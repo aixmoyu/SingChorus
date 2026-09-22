@@ -305,7 +305,10 @@ export class CloudClient {
    * config + docker compose + entry script, all from cloud templates. Same
    * source of truth as subscriptions — no local assembly.
    */
-  async renderDeploy(instances: Array<{ id: string; serverConfig: Record<string, unknown>; clientConfig?: Record<string, unknown> }>): Promise<{
+  async renderDeploy(
+    instances: Array<{ id: string; serverConfig: Record<string, unknown>; clientConfig?: Record<string, unknown> }>,
+    options: { serverOverallId?: string; dockerOverallId?: string } = {},
+  ): Promise<{
     serverConfig: Record<string, unknown>;
     composeYaml: string;
     entrySh: string;
@@ -313,7 +316,7 @@ export class CloudClient {
     const resp = await this.request({
       method: 'POST',
       path: '/api/render/deploy',
-      body: { instances },
+      body: { instances, ...options },
     });
     if (resp.status === 404) {
       // Cloud predates the deploy-render endpoint — caller falls back to local assembly.
