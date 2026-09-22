@@ -23,6 +23,15 @@
               <n-button @click="generateToken">Generate</n-button>
             </n-input-group>
           </n-form-item>
+          <n-form-item label="sing-box Version" path="singboxVersion">
+            <n-select
+              v-model:value="form.singboxVersion"
+              :options="versionOptions"
+              filterable
+              tag
+              placeholder="Select the consumer sing-box version"
+            />
+          </n-form-item>
           <n-form-item label="Overall Template">
             <n-select
               v-model:value="form.overallTemplateId"
@@ -59,23 +68,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NCard, NForm, NFormItem, NInput, NInputGroup, NSelect, NSwitch, NButton, NModal, NAlert, useMessage } from 'naive-ui'
 import { useSubscriptionStore } from '@/stores/subscription'
-import http, { extractApiError } from '@/lib/http'
+import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
+import { useSubscriptionTemplateOptions } from '@/composables/useSubscriptionTemplateOptions'
 
 const router = useRouter()
 const message = useMessage()
 const subscriptionStore = useSubscriptionStore()
 const formRef = ref()
 const { labelPlacement } = useFormLabelPlacement()
+const { versions, clientTemplateOptions, loadVersions, loadClientTemplates } = useSubscriptionTemplateOptions()
 
 const form = ref({
   name: '',
   path: '',
   token: '',
+  singboxVersion: null as string | null,
   overallTemplateId: null as string | null,
   active: true,
 })
@@ -86,9 +98,18 @@ const formRules = {
     { pattern: /^[a-z0-9-]+$/, message: 'Only lowercase letters, numbers, and hyphens', trigger: 'blur' },
     { min: 2, max: 64, message: '2-64 characters', trigger: 'blur' },
   ],
+  singboxVersion: [
+    { required: true, message: 'sing-box version is required', trigger: 'blur' },
+    { pattern: /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/, message: 'Expected X.Y.Z[-suffix]', trigger: 'blur' },
+  ],
 }
 
-const clientTemplateOptions = ref<{ label: string; value: string }[]>([])
+const versionOptions = computed(() => versions.value.map((v) => ({ label: v, value: v })))
+
+// 订阅绑定版本决定可选模板：版本变化即按该版本重新拉取过滤后的列表（§13.5）。
+watch(() => form.value.singboxVersion, (v) => {
+  void loadClientTemplates(v)
+})
 
 const submitting = ref(false)
 const showTokenModal = ref(false)
@@ -100,16 +121,6 @@ function generateToken() {
   const bytes = new Uint8Array(16)
   crypto.getRandomValues(bytes)
   form.value.token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-async function loadFormOptions() {
-  try {
-    const templatesRes = await http.get('/core/cloud/templates', { params: { role: 'client' } })
-    clientTemplateOptions.value = (templatesRes.data.templates ?? []).map((t: { name: string; id: string }) => ({
-      label: t.name,
-      value: t.id,
-    }))
-  } catch { /* silent */ }
 }
 
 async function handleSubmit() {
@@ -124,12 +135,14 @@ async function handleSubmit() {
     const payload: {
       name: string
       path: string
+      singboxVersion: string
       overallTemplateId?: string
       active: boolean
       token?: string
     } = {
       name: form.value.name,
       path: form.value.path,
+      singboxVersion: form.value.singboxVersion!,
       overallTemplateId: form.value.overallTemplateId ?? undefined,
       active: form.value.active,
     }
@@ -164,6 +177,6 @@ function done() {
 }
 
 onMounted(() => {
-  loadFormOptions()
+  void loadVersions()
 })
 </script>

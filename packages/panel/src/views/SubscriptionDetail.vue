@@ -24,6 +24,15 @@
               <n-button @click="copyToken">Copy</n-button>
             </n-input-group>
           </n-form-item>
+          <n-form-item label="sing-box Version" path="singboxVersion">
+            <n-select
+              v-model:value="form.singboxVersion"
+              :options="versionOptions"
+              filterable
+              tag
+              placeholder="Select the consumer sing-box version"
+            />
+          </n-form-item>
           <n-form-item label="Overall Template">
             <n-select
               v-model:value="form.overallTemplateId"
@@ -66,12 +75,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { NCard, NForm, NFormItem, NInput, NInputGroup, NSelect, NSwitch, NButton, NModal, NAlert, NSpin, NResult, useMessage, useDialog } from 'naive-ui'
 import { useSubscriptionStore } from '@/stores/subscription'
-import http, { extractApiError } from '@/lib/http'
+import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
+import { useSubscriptionTemplateOptions } from '@/composables/useSubscriptionTemplateOptions'
 import type { Subscription } from '@/lib/types'
 
 const route = useRoute()
@@ -81,6 +91,7 @@ const dialog = useDialog()
 const subscriptionStore = useSubscriptionStore()
 const formRef = ref()
 const { labelPlacement } = useFormLabelPlacement()
+const { versions, clientTemplateOptions, loadVersions, loadClientTemplates } = useSubscriptionTemplateOptions()
 
 const original = ref<Subscription | null>(null)
 const form = ref<Subscription | null>(null)
@@ -92,13 +103,17 @@ const regenerating = ref(false)
 const showTokenModal = ref(false)
 const newToken = ref('')
 
-const clientTemplateOptions = ref<{ label: string; value: string }[]>([])
+const versionOptions = computed(() => versions.value.map((v) => ({ label: v, value: v })))
 
 const formRules = {
   path: [
     { required: true, message: 'Path is required', trigger: 'blur' },
     { pattern: /^[a-z0-9-]+$/, message: 'Only lowercase letters, numbers, and hyphens', trigger: 'blur' },
     { min: 2, max: 64, message: '2-64 characters', trigger: 'blur' },
+  ],
+  singboxVersion: [
+    { required: true, message: 'sing-box version is required', trigger: 'blur' },
+    { pattern: /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/, message: 'Expected X.Y.Z[-suffix]', trigger: 'blur' },
   ],
 }
 
@@ -108,15 +123,10 @@ const maskedToken = computed(() => {
   return '••••••••••••••••••••••••••••••••••••••••••'
 })
 
-async function loadFormOptions() {
-  try {
-    const templatesRes = await http.get('/core/cloud/templates', { params: { role: 'client' } })
-    clientTemplateOptions.value = (templatesRes.data.templates ?? []).map((t: { name: string; id: string }) => ({
-      label: t.name,
-      value: t.id,
-    }))
-  } catch { /* silent */ }
-}
+// 版本变化 → 按新版本重拉过滤后的模板列表（§13.5）。
+watch(() => form.value?.singboxVersion, (v) => {
+  void loadClientTemplates(v)
+})
 
 async function loadSubscription() {
   const id = route.params.id as string
@@ -146,11 +156,13 @@ async function handleSave() {
     const patch: {
       name: string
       path: string
+      singboxVersion: string
       overallTemplateId: string | null
       active: boolean
     } = {
       name: form.value.name,
       path: form.value.path,
+      singboxVersion: form.value.singboxVersion,
       overallTemplateId: form.value.overallTemplateId,
       active: form.value.active,
     }
@@ -210,8 +222,8 @@ async function copyNewToken() {
 }
 
 onMounted(() => {
-  loadSubscription()
-  loadFormOptions()
+  void loadSubscription()
+  void loadVersions()
 })
 
 // Warn when navigating away with pending (unsaved) form edits.
@@ -219,6 +231,7 @@ onBeforeRouteLeave(() => {
   if (!form.value || !original.value) return true
   const dirty = form.value.name !== original.value.name
     || form.value.path !== original.value.path
+    || form.value.singboxVersion !== original.value.singboxVersion
     || form.value.overallTemplateId !== original.value.overallTemplateId
     || form.value.active !== original.value.active
   if (!dirty) return true

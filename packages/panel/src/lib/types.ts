@@ -53,6 +53,8 @@ export interface Subscription {
   id: string
   name: string
   path: string
+  /** 订阅绑定的 sing-box 版本（必填）：交付端 compat 校验依据（设计 §13.1）。 */
+  singboxVersion: string
   overallTemplateId: string | null
   overallParams: string
   token: string

@@ -1,6 +1,6 @@
 # sing-box 版本管理方案设计
 
-- **状态**: 提案（待评审 / 未实施）
+- **状态**: v1 已实施（P0+P1）；v2 增量见 §13（订阅绑定版本等缺口，2026-09-22 评审）
 - **日期**: 2026-09-22
 - **基线**: `c31cd89`（feat(deploy): 支持选择非默认服务器模板进行部署）
 - **范围**: cloud / core / panel / ctl 四包
@@ -523,3 +523,74 @@ entry.sh: sing-box check（同版本镜像！）失败 → 健康检查超时 �
 5. **semver 匹配只在 cloud** —— panel 只消费过滤结果。
 6. **`singbox_image` 保留为高级覆盖**（自定义 registry 时整体替换），
    `singbox_version` 是常规路径。
+
+---
+
+## 13. v2 增量：订阅绑定版本与剩余缺口（2026-09-22 评审）
+
+v1 落地后复审发现：版本闭环在**订阅链路**上断开了——订阅不绑定版本，
+交付端只有消费者手动 `?version=` 的 opt-in 校验（不传就不校验）；订阅的
+overall-client 模板选择也不按版本过滤。新项目无存量部署，直接把语义收紧
+（不做"未设置 = 任意"的宽松路径），废弃 v1 的 opt-in 设计（§12.4 推翻）。
+
+### 13.1 订阅绑定版本（必填）
+
+- `subscriptions` 表新增 `singbox_version TEXT NOT NULL`——创建订阅时
+  必选（候选来自 §13.3 版本目录），链接本身即绑定具体版本。
+- **交付端强制校验**：`GET /s/:path` 一律用绑定版本比对 overall-client
+  模板 compat，不匹配 → 400 `SBX_VERSION_INCOMPATIBLE`。v1 的
+  `?version=` query 参数删除（绑定即事实来源，消费者传参只会造成
+  "链接版本 ≠ 订阅版本"的混乱）。
+- 订阅版本修改（update）时 DELETE 对应 `sub_delivery_cache` 行——
+  缓存按 path 键控，版本变更后 stale fallback 不能再端旧版本的渲染产物
+  （v1 存在的隐性 bug，此处一并修复；overall 模板/参数/token 变更同样清缓存）。
+
+### 13.2 交付端 instance 兼容排除
+
+订阅交付把 instance 的 outbound 塞进 overall-client 模板渲染。outbound
+由协议模板生成，其兼容性 = **协议模板的 `singbox_compat` vs 订阅绑定版本**
+（交付端可查，无需记录生成时版本）：
+
+- 不兼容的 instance **排除**而非报错（一个坏配置不能挂掉整个订阅），
+  响应头 `X-Sbx-Skipped-Instances: <n>` + 服务端日志留痕；
+- 全部被排除 → 400 `SBX_NO_COMPATIBLE_INSTANCES`（列出被排除项），
+  静默返回空配置只会让最终用户莫名缺节点。
+
+### 13.3 版本目录显式服务端化
+
+v1 的候选版本列表是 panel 前端从 docker 模板 `params[].enum` 挖取的
+（隐式契约：自定义 docker 模板不带该 param 时下拉变空）。收紧为：
+
+- 新端点 `GET /api/singbox-versions`：聚合所有 `overall-docker` 模板的
+  `singbox_version` param enum，去重后按 semver 降序返回 `{ versions }`；
+- panel Settings 版本下拉、订阅创建版本下拉共用此端点（经 panel server
+  代理 `/api/core/cloud/singbox-versions`）；
+- panel server `/core/cloud/templates` 支持显式 `?singbox_version=` 覆盖
+  本机版本注入（订阅模板选择按**订阅绑定版本**过滤，而非本机版本）。
+
+### 13.4 配置生成版本快照（本地 drift）
+
+`ConfigEntry` 新增 `singbox_version`（生成/重生成时的本机版本 pin 快照，
+由 core 在 `add/upsert` 时写入）：
+
+- 节点切换版本后，ConfigList 对 `entry.singbox_version ≠ 当前 pin` 的
+  配置显示 drift 标记（配置内容是旧版本语法，Redeploy 前应重新生成）；
+- 仅本地元数据，不上报 cloud（cloud 端判定交付兼容性靠模板 compat，
+  见 §13.2，不依赖该列）。
+
+### 13.5 订阅 UI（补齐 v1 承诺未做项）
+
+- SubscriptionCreate / Detail：版本下拉（必选，来自版本目录）→
+  overall-client 模板下拉按所选版本过滤（服务端过滤复用 v1 端点）+
+  模板卡片 compat 徽章；
+- Settings 版本变更保存时，列出绑定旧版本、将开始交付 400 的订阅，
+  dialog 提示（节点升级版本 → 同步改订阅版本 是明确的两步操作）。
+
+### 13.6 v1 遗留项的处置
+
+| 项 | 处置 |
+|---|---|
+| §12.4 订阅端不强校验、`?version=` opt-in | **推翻**：订阅必绑版本，交付端强制校验 |
+| §9 "订阅消费端 sing-box 版本对 cloud 不可知" | 不再成立：版本随订阅绑定 |
+| §3.3 `GET /s/:path?version=` | 参数删除 |
+| §5.4 SubscriptionCreate 徽章 / 带版本链接 | 徽章由 §13.5 补齐；带版本链接不再需要（版本在服务端绑定） |

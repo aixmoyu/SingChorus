@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { ensureDatabaseInitialized } from './db/schema';
 import { protocols } from './routes/protocols';
 import { protocolInstances } from './routes/protocol-instances';
-import { templates } from './routes/templates';
+import { templates, singboxVersions } from './routes/templates';
 import { clients } from './routes/clients';
 import { subscriptions } from './routes/subscriptions';
 import { admin } from './routes/admin';
@@ -62,6 +62,7 @@ app.get('/health', (c) => {
 app.route('/api/protocols', protocols);
 app.route('/api/protocol-instances', protocolInstances);
 app.route('/api/templates', templates);
+app.route('/api/singbox-versions', singboxVersions);
 app.route('/api/clients', clients);
 app.route('/', subscriptions);
 app.route('/api/admin', admin);

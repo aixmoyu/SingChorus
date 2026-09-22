@@ -38,12 +38,20 @@ export interface ConfigEntry {
   updated_at: string
   /** 配置所属节点的指纹；缺省视为本机创建（向后兼容旧数据）。 */
   node_fingerprint?: string
+  /**
+   * 生成/重生成时的本机 sing-box 版本 pin 快照（'' = 未设置）。节点切换
+   * 版本后与当前 pin 不一致的配置在 UI 标记 drift（内容是旧版本语法，
+   * Redeploy 前应重新生成）——设计 §13.4。仅本地元数据，不上报 cloud。
+   */
+  singbox_version?: string
 }
 
 export interface Subscription {
   id: string
   name: string
   path: string
+  /** 订阅绑定的 sing-box 版本（cloud 端必填）：交付端 compat 校验依据（设计 §13.1）。 */
+  singboxVersion: string
   overallTemplateId: string | null
   overallParams: string
   token: string

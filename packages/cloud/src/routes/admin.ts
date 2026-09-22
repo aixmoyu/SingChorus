@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { adminAuth } from '../auth/middleware';
-import { logAction } from '../services/audit';
 import type { ProtocolConfigFile, OverallConfigFile } from '../engine/types';
 import vlessServerJson from '../templates/protocols/vless-reality-vision/server.json';
 import vlessClientJson from '../templates/protocols/vless-reality-vision/client.json';
@@ -80,6 +79,7 @@ admin.post('/seed', async (c) => {
       entry_script: null,
       params: JSON.stringify(hy2Cfg.params),
       description: hy2Cfg.description ?? null,
+      singbox_compat: hy2Cfg.singbox_compat ?? null,
     },
     {
       id: 'vless-reality-vision',
@@ -93,6 +93,7 @@ admin.post('/seed', async (c) => {
       entry_script: null,
       params: JSON.stringify(vlessCfg.params),
       description: vlessCfg.description ?? null,
+      singbox_compat: vlessCfg.singbox_compat ?? null,
     },
     {
       id: 'server-default',
@@ -106,6 +107,7 @@ admin.post('/seed', async (c) => {
       entry_script: null,
       params: '[]',
       description: serverCfg.description ?? 'Default server overall template',
+      singbox_compat: serverCfg.singbox_compat ?? null,
     },
     {
       id: 'client-default',
@@ -119,6 +121,7 @@ admin.post('/seed', async (c) => {
       entry_script: null,
       params: '[]',
       description: clientCfg.description ?? 'Default client overall template',
+      singbox_compat: clientCfg.singbox_compat ?? null,
     },
     {
       id: 'docker-default',
@@ -130,8 +133,11 @@ admin.post('/seed', async (c) => {
       template_content: JSON.stringify(defaultDockerTmpl),
       config: JSON.stringify(defaultDockerConfig),
       entry_script: '#!/bin/sh\nset -e\nconfigFilePath="/data/config.json"\necho "entry"\nsing-box version\necho -e "\\nconfig:"\nsing-box check -c $configFilePath || cat $configFilePath\necho -e "\\nstarting"\nsing-box run -c $configFilePath\n',
-      params: '[]',
+      // singbox_version param（enum = 版本目录来源，设计 §13.3）不能落成 '[]'，
+      // 否则 GET /api/singbox-versions 永远为空
+      params: JSON.stringify(dockerCfg.params ?? []),
       description: dockerCfg.description ?? 'Default docker-compose template',
+      singbox_compat: dockerCfg.singbox_compat ?? null,
     },
   ];
 
@@ -140,22 +146,25 @@ admin.post('/seed', async (c) => {
     if (existing) {
       await c.env.DB.prepare(
         `UPDATE templates SET category = ?, name = ?, version = ?, server_template = ?, client_template = ?,
-         template_content = ?, config = ?, entry_script = ?, params = ?, description = ?, updated_at = datetime('now')
+         template_content = ?, config = ?, entry_script = ?, params = ?, description = ?, singbox_compat = ?,
+         updated_at = datetime('now')
          WHERE id = ?`
       ).bind(
         t.category, t.name, t.version, t.server_template, t.client_template,
-        t.template_content, t.config, t.entry_script, t.params, t.description, t.id,
+        t.template_content, t.config, t.entry_script, t.params, t.description,
+        (t as { singbox_compat?: string | null }).singbox_compat ?? null, t.id,
       ).run();
       results.push({ table: 'templates', id: t.id, status: 'updated' });
     } else {
       await c.env.DB.prepare(
-        `INSERT INTO templates (id, category, name, version, server_template, client_template, template_content, config, entry_script, params, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO templates (id, category, name, version, server_template, client_template, template_content, config, entry_script, params, description, singbox_compat)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         t.id, t.category, t.name, t.version,
         t.server_template, t.client_template,
         t.template_content, t.config, t.entry_script,
         t.params, t.description,
+        (t as { singbox_compat?: string | null }).singbox_compat ?? null,
       ).run();
       results.push({ table: 'templates', id: t.id, status: 'created' });
     }

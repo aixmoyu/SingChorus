@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   path TEXT NOT NULL UNIQUE,
+  singbox_version TEXT NOT NULL,
   overall_template_id TEXT DEFAULT NULL,
   overall_params TEXT NOT NULL DEFAULT '{}',
   token TEXT NOT NULL UNIQUE,

@@ -143,6 +143,7 @@ export interface SubscriptionRow {
   id: string;
   name: string;
   path: string;
+  singbox_version: string;
   overall_template_id: string | null;
   overall_params: string;
   token: string;
@@ -155,6 +156,8 @@ export interface Subscription {
   id: string;
   name: string;
   path: string;
+  /** 订阅绑定的 sing-box 版本（必填）：交付端 compat 校验的依据（设计 §13.1）。 */
+  singboxVersion: string;
   overallTemplateId: string | null;
   overallParams: string;
   token: string;
@@ -168,6 +171,7 @@ export function parseSubscriptionRow(row: SubscriptionRow): Subscription {
     id: row.id,
     name: row.name,
     path: row.path,
+    singboxVersion: row.singbox_version,
     overallTemplateId: row.overall_template_id ?? null,
     overallParams: row.overall_params,
     token: row.token,

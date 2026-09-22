@@ -17,6 +17,7 @@ const createSubscriptionSchema = z.object({
   name: z.string().optional(),
   path: z.string().min(1).max(64).optional(),
   token: z.string().optional(),
+  singboxVersion: z.string().min(1),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: recordSchema.optional(),
   active: z.boolean().optional(),
@@ -26,6 +27,7 @@ const updateSubscriptionSchema = z.object({
   name: z.string().optional(),
   path: z.string().min(1).max(64).optional(),
   token: z.string().optional(),
+  singboxVersion: z.string().min(1).optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: recordSchema.optional(),
   active: z.boolean().optional(),
@@ -39,9 +41,24 @@ router.get('/cloud/templates', async (req, res) => {
   try {
     const role = req.query.role as string | undefined
     // 节点版本注入（§5.2）：cloud 按模板 singbox_compat 过滤，前端零感知。
-    const version = core.getAppConfig().singbox_version || undefined
+    // 显式 ?singbox_version= 覆盖（§13.3）：订阅模板选择按「订阅绑定版本」
+    // 过滤，而非本机版本。
+    const requested = req.query.singbox_version as string | undefined
+    const version = requested || core.getAppConfig().singbox_version || undefined
     const { templates, filtered_count } = await core.cloud.getTemplatesWithCount(role, version)
     res.json({ templates, filtered_count })
+  } catch (err) {
+    const e = toCoreError(err)
+    res.status(503).json(toErrorEnvelope(e.code || 'CLOUD_UNREACHABLE', e.message))
+  }
+})
+
+// 版本目录（§13.3）：cloud 聚合 docker 模板 enum，Settings 与订阅创建共用。
+router.get('/cloud/singbox-versions', async (_req, res) => {
+  const core = getCore()
+  try {
+    const versions = await core.cloud.getSingboxVersions()
+    res.json({ versions })
   } catch (err) {
     const e = toCoreError(err)
     res.status(503).json(toErrorEnvelope(e.code || 'CLOUD_UNREACHABLE', e.message))

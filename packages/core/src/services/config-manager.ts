@@ -14,7 +14,7 @@ export function extractConfigPort(entry: { server_config?: Record<string, unknow
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
 
-function makeEntry(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, enabled?: boolean): ConfigEntry {
+function makeEntry(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, enabled?: boolean, singboxVersion?: string): ConfigEntry {
   return {
     name, node, type,
     enabled: enabled ?? true,
@@ -26,17 +26,23 @@ function makeEntry(name: string, node: string, type: string, server: Record<stri
     params,
     created_at: now(),
     updated_at: now(),
+    ...(singboxVersion !== undefined ? { singbox_version: singboxVersion } : {}),
   };
 }
 
 export class ConfigManager {
   constructor(private store: LocalStore) {}
 
+  /** 生成/重生成时的版本快照（设计 §13.4）：本机 sing-box 版本 pin（'' = 未设置）。 */
+  private currentSingboxVersion(): string {
+    return this.store.loadAppConfig().singbox_version || '';
+  }
+
   add(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): ConfigEntry {
     if (!name) throw new AppError(ERRORS.CFG_NAME_REQUIRED.code, ERRORS.CFG_NAME_REQUIRED.message, ERRORS.CFG_NAME_REQUIRED.status);
     if (this.store.configExists(name)) throw new AppError(ERRORS.CFG_DUPLICATE.code, ERRORS.CFG_DUPLICATE.message, ERRORS.CFG_DUPLICATE.status);
     this.assertNoPortConflict(name, { server_config: server, client_config: client });
-    const entry = makeEntry(name, node, type, server, client, params);
+    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion());
     this.store.saveConfig(entry);
     return entry;
   }
@@ -45,7 +51,7 @@ export class ConfigManager {
    *  no duplicate check: re-generating the same config overwrites it). */
   upsert(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): ConfigEntry {
     if (!name) throw new AppError(ERRORS.CFG_NAME_REQUIRED.code, ERRORS.CFG_NAME_REQUIRED.message, ERRORS.CFG_NAME_REQUIRED.status);
-    const entry = makeEntry(name, node, type, server, client, params);
+    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion());
     this.store.saveConfig(entry);
     return entry;
   }

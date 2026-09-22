@@ -39,6 +39,7 @@ export const useSubscriptionStore = defineStore('subscription', () => {
     data: Partial<Subscription> & {
       name?: string
       path?: string
+      singboxVersion?: string
       overallTemplateId?: string | null
       overallParams?: Record<string, unknown>
     },

@@ -112,10 +112,15 @@ const CREATE_TABLES = [
     FOREIGN KEY (protocol_id) REFERENCES templates(id),
     FOREIGN KEY (node_id) REFERENCES nodes(id)
   )`,
+  // singbox_version: 订阅绑定的 sing-box 版本（必填，semver）——交付端用它强制
+  // 校验 overall-client 模板与各 instance 协议模板的 compat（设计 §13.1/§13.2）。
+  // 注：不要在 CREATE TABLE SQL 内写 `--` 注释，eager DDL 会把它带进
+  // sqlite_master 破坏 schema-fingerprint 一致性。
   `CREATE TABLE IF NOT EXISTS subscriptions (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
+    singbox_version TEXT NOT NULL,
     overall_template_id TEXT DEFAULT NULL,
     overall_params TEXT NOT NULL DEFAULT '{}',
     token TEXT NOT NULL UNIQUE,

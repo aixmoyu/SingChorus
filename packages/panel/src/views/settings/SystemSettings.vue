@@ -34,7 +34,6 @@
           <n-select
             v-model:value="singboxVersionValue"
             :options="versionOptions"
-            :loading="templateStore.loading"
             filterable
             tag
             clearable
@@ -72,18 +71,20 @@
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from 'vue'
-import { NCard, NDescriptions, NDescriptionsItem, NSpin, NForm, NFormItem, NInput, NButton, NAlert, NSelect, useMessage } from 'naive-ui'
+import { NCard, NDescriptions, NDescriptionsItem, NSpin, NForm, NFormItem, NInput, NButton, NAlert, NSelect, useMessage, useDialog } from 'naive-ui'
 import { useInfoStore } from '@/stores/info'
 import { useSettingsStore } from '@/stores/settings'
-import { useTemplateStore } from '@/stores/template'
+import { useSubscriptionStore } from '@/stores/subscription'
+import http from '@/lib/http'
 import CloudUrlInput from '@/components/CloudUrlInput.vue'
 import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
 
 const infoStore = useInfoStore()
 const settings = useSettingsStore()
-const templateStore = useTemplateStore()
+const subscriptionStore = useSubscriptionStore()
 const message = useMessage()
+const dialog = useDialog()
 const { labelPlacement } = useFormLabelPlacement()
 
 const info = computed(() => infoStore.systemInfo)
@@ -97,15 +98,12 @@ const testResult = ref<boolean | null>(null)
 
 // --- sing-box version pin ---
 const singboxVersionValue = ref<string | null>(null)
+const savedSingboxVersion = ref<string | null>(null)
 const savingSingbox = ref(false)
+const catalogVersions = ref<string[]>([])
 
-/** 版本下拉候选：来自 cloud docker 模板的 singbox_version param enum。 */
-const versionOptions = computed(() => {
-  const dockerTpl = templateStore.templates.find((t) => t.role === 'docker')
-  const param = dockerTpl?.schema?.params?.find((p) => p.name === 'singbox_version')
-  const values = (param?.enum as string[] | undefined) ?? []
-  return values.map((v) => ({ label: v, value: v }))
-})
+/** 版本下拉候选：来自 cloud 版本目录端点（设计 §13.3）。 */
+const versionOptions = computed(() => catalogVersions.value.map((v) => ({ label: v, value: v })))
 
 /** Persist the sing-box version pin only. Returns false (and shows the error) on failure. */
 async function saveSingbox(): Promise<boolean> {
@@ -117,7 +115,26 @@ async function saveSingbox(): Promise<boolean> {
   savingSingbox.value = true
   try {
     await settings.saveSettings(undefined, undefined, undefined, undefined, version)
+    // 版本变更影响面提示（设计 §13.5）：绑定旧版本的订阅将开始交付 400，
+    // 需要到订阅页同步修改绑定版本。
+    const previous = savedSingboxVersion.value
+    savedSingboxVersion.value = version || null
     message.success('sing-box version saved — takes effect on the next deploy')
+    if (version && previous && previous !== version) {
+      const affected = subscriptionStore.subscriptions.filter(
+        (s) => s.active && s.singboxVersion && s.singboxVersion !== version,
+      )
+      if (affected.length > 0) {
+        dialog.warning({
+          title: 'Subscriptions Bound to the Old Version',
+          content:
+            `${affected.length} subscription(s) are pinned to a different sing-box version and will fail delivery until updated: ` +
+            affected.map((s) => `${s.name || s.path} (${s.singboxVersion})`).join(', ') +
+            '. Update their pinned version in Subscriptions.',
+          positiveText: 'OK',
+        })
+      }
+    }
     return true
   } catch (e: unknown) {
     message.error(extractApiError(e, 'Save failed').message)
@@ -175,8 +192,13 @@ onMounted(async () => {
   nodeForm.nodeName = settings.nodeName
   nodeForm.nodeAddress = settings.nodeAddress
   singboxVersionValue.value = settings.singboxVersion || null
+  savedSingboxVersion.value = settings.singboxVersion || null
   infoStore.fetchSystemInfo().catch(() => { /* system info is best-effort */ })
-  // 版本下拉候选来自 docker 模板 param enum；未配置 cloud 时保持为空。
-  templateStore.fetchTemplates('docker').catch(() => { /* selector stays empty */ })
+  // 版本下拉候选来自 cloud 版本目录（§13.3）；未配置 cloud 时保持为空。
+  http.get('/core/cloud/singbox-versions')
+    .then((res) => { catalogVersions.value = res.data.versions ?? [] })
+    .catch(() => { /* selector stays empty */ })
+  // 订阅列表用于版本变更影响面提示（§13.5）；best-effort。
+  subscriptionStore.fetchSubscriptions().catch(() => { /* non-blocking */ })
 })
 </script>

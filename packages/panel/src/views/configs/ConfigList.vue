@@ -62,6 +62,7 @@ import { useRouter } from 'vue-router'
 import { NDataTable, NButton, NSpace, NTag, NModal, NCard, NText, NEmpty, NAlert, useMessage } from 'naive-ui'
 import { useConfigStore } from '@/stores/config'
 import { useCloudStore } from '@/stores/cloud'
+import { useSettingsStore } from '@/stores/settings'
 import { extractApiError } from '@/lib/http'
 import { syncStatusColor, syncStatusLabel } from '@/lib/sync-status'
 import type { ConfigEntry, SyncStatus } from '@/lib/types'
@@ -70,6 +71,7 @@ const message = useMessage()
 const router = useRouter()
 const configStore = useConfigStore()
 const cloudStore = useCloudStore()
+const settings = useSettingsStore()
 
 const showDeleteModal = ref(false)
 const deleting = ref(false)
@@ -81,6 +83,21 @@ const pagination = { pageSize: 10 }
 const columns = [
   { title: 'Name', key: 'name', sorter: (a: ConfigEntry, b: ConfigEntry) => a.name.localeCompare(b.name) },
   { title: 'Type', key: 'type', sorter: (a: ConfigEntry, b: ConfigEntry) => a.type.localeCompare(b.type) },
+  {
+    // 生成版本快照（设计 §13.4）：与当前 pin 不一致 → 配置内容是旧版本语法，
+    // Redeploy 前应重新生成。
+    title: 'sing-box',
+    key: 'singbox_version',
+    render: (row: ConfigEntry) => {
+      const generated = row.singbox_version || ''
+      const pin = settings.singboxVersion || ''
+      if (!generated) return h(NTag, { size: 'small', bordered: false, depth: 3 }, { default: () => 'unknown' })
+      if (pin && generated !== pin) {
+        return h(NTag, { type: 'warning', size: 'small' }, { default: () => `${generated} → ${pin}` })
+      }
+      return h(NTag, { type: 'info', size: 'small', bordered: false }, { default: () => generated })
+    },
+  },
   {
     title: 'Sync',
     key: 'sync',
@@ -194,6 +211,8 @@ onMounted(async () => {
   // engine's job — viewing a page should not trigger sync runs.
   configStore.fetchRemoteConfigs()
   cloudStore.fetchSyncStatuses()
+  // 版本 drift 列需要当前 pin（§13.4）；已加载时跳过。
+  if (!settings.singboxVersion) settings.fetchSettings().catch(() => { /* best-effort */ })
 })
 </script>
 

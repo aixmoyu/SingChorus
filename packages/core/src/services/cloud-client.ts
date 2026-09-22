@@ -318,6 +318,14 @@ export class CloudClient {
     return [...p, ...s, ...c, ...d];
   }
 
+  /** 版本目录（设计 §13.3）：cloud 聚合 docker 模板 enum，semver 降序。
+   *  panel Settings 版本下拉与订阅创建版本下拉共用。 */
+  async getSingboxVersions(): Promise<string[]> {
+    const resp = await this.request({ method: 'GET', path: '/api/singbox-versions' });
+    if (resp.status !== 200) return [];
+    return Array.isArray(resp.data?.versions) ? resp.data.versions : [];
+  }
+
   async renderProtocol(
     protocolId: string,
     params: Record<string, unknown>,

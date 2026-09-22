@@ -23,7 +23,7 @@ const subscriptions = new Hono<{ Bindings: Env }>();
  * rather than erroring.
  */
 const CONFIGS_TTL_MS = 300_000;
-let configsCache: { at: number; configs: ProtocolInstanceConfig[] } | null = null;
+let configsCache: { at: number; configs: LoadedConfig[] } | null = null;
 
 /** Test-only: drop the isolate cache (D1 storage resets per test but module
  * state persists in the single test worker). */
@@ -104,16 +104,24 @@ async function serveStaleDelivery(
  * Only deployed+enabled configs belong in a user subscription: nodes that the
  * owner actually runs. Undeployed/disabled configs are still synced (for
  * management/visibility) but excluded here. One indexed query.
+ *
+ * Rows carry their protocol template id (`protocol_type`) so delivery can
+ * exclude outbounds whose protocol is incompatible with the subscription's
+ * pinned sing-box version (设计 §13.2).
  */
-async function loadConfigsFromD1(env: Env, logger: Logger): Promise<ProtocolInstanceConfig[]> {
+interface LoadedConfig extends ProtocolInstanceConfig {
+  protocolId?: string;
+}
+
+async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig[]> {
   if (configsCache && Date.now() - configsCache.at < CONFIGS_TTL_MS) {
-    return configsCache.configs;
+    return configsCache.configs as LoadedConfig[];
   }
   try {
     const { results } = await env.DB.prepare(
-      `SELECT name, config FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
-    ).all<{ name: string; config: string }>();
-    const configs: ProtocolInstanceConfig[] = [];
+      `SELECT name, config, protocol_type FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
+    ).all<{ name: string; config: string; protocol_type: string }>();
+    const configs: LoadedConfig[] = [];
     for (const row of results ?? []) {
       try {
         const parsed = JSON.parse(row.config);
@@ -122,6 +130,7 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<ProtocolInst
             id: row.name || 'client',
             serverConfig: {},
             clientConfig: parsed,
+            protocolId: row.protocol_type || undefined,
           });
         }
       } catch { /* malformed row — skip */ }
@@ -134,22 +143,19 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<ProtocolInst
     // polling consumers.
     if (configsCache) {
       logger.warn('subscription delivery: client-configs fallback failed, serving stale cache', { err: e });
-      return configsCache.configs;
+      return configsCache.configs as LoadedConfig[];
     }
     throw e;
   }
 }
 
-// Delivery endpoint: GET /s/{path}?token={token}[&version=X.Y.Z]
+// Delivery endpoint: GET /s/{path}?token={token}
+// 版本语义（设计 §13.1）：订阅在创建时绑定 sing-box 版本（必填），交付端
+// 一律用绑定版本强制校验 overall-client 模板 compat，并排除协议模板不兼容
+// 的 instance（§13.2）。消费者传参 `?version=` 已废弃——绑定即事实来源。
 subscriptions.get('/s/:path', async (c) => {
   const { path } = c.req.param();
   const token = c.req.query('token');
-  // 订阅端可选的消费者 sing-box 版本（显式 opt-in）：与订阅绑定的
-  // overall-client 模板 compat 校验；不传 → 现状行为，无强校验。
-  const consumerVersion = c.req.query('version');
-  if (consumerVersion !== undefined && consumerVersion !== '' && !isValidSingboxVersion(consumerVersion)) {
-    return c.json({ error: { code: 'SBX_BAD_VERSION', message: `Invalid sing-box version: '${consumerVersion}'` } }, 400);
-  }
 
   if (!token) {
     return c.json({ error: { code: 'AUTH_MISSING_TOKEN', message: 'Subscription token required' } }, 401);
@@ -200,7 +206,7 @@ subscriptions.get('/s/:path', async (c) => {
   }
 
   // Try D1 protocol_instances first, fall back to synced client configs (panel push)
-  let configs: ProtocolInstanceConfig[];
+  let configs: LoadedConfig[];
   try {
     const { results: instanceRows } = await c.env.DB.prepare(
       `SELECT * FROM protocol_instances WHERE status = 'active'`
@@ -211,6 +217,7 @@ subscriptions.get('/s/:path', async (c) => {
         id: row.id,
         serverConfig: row.server_config ? JSON.parse(row.server_config) : {},
         clientConfig: row.client_config ? JSON.parse(row.client_config) : {},
+        protocolId: row.protocol_id || undefined,
       }));
     } else {
       // Fallback: read D1 client configs (synced from local panels), cached
@@ -234,35 +241,65 @@ subscriptions.get('/s/:path', async (c) => {
 
   const reg = new PluginRegistry(c.env.DB);
 
+  // 订阅绑定的 sing-box 版本（必填列）：交付端 compat 校验的唯一依据。
+  const subVersion = sub.singboxVersion;
+
   let clientConfig: Record<string, unknown>;
+  // 被版本兼容性排除的 instance 描述（§13.2）——供响应头与日志使用。
+  const skipped: string[] = [];
   try {
     await reg.loadAll();
 
-    // 显式 opt-in 的消费者版本校验：与订阅绑定的 overall-client 模板 compat
-    // 比对，不匹配 → 400 明确报错（模板名 + 所需范围）。
-    if (consumerVersion && sub.overallTemplateId) {
+    // 交付强制校验（设计 §13.1）：绑定版本与 overall-client 模板 compat
+    // 比对，不匹配 → 400 明确报错（模板名 + 所需范围）。管理员修改订阅
+    // 模板或版本后，此处是最终防线。
+    if (sub.overallTemplateId) {
       const tmpl = reg.getTemplate(sub.overallTemplateId);
       const compat = tmpl?.singboxCompat ?? null;
-      if (!isCompatSatisfied(compat, consumerVersion)) {
+      if (!isCompatSatisfied(compat, subVersion)) {
         return c.json({
           error: {
             code: 'SBX_VERSION_INCOMPATIBLE',
-            message: `sing-box ${consumerVersion} is incompatible with subscription template '${sub.overallTemplateId}' (requires '${compat ?? '*'}')`,
+            message: `sing-box ${subVersion} is incompatible with subscription template '${sub.overallTemplateId}' (requires '${compat ?? '*'}')`,
           },
         }, 400);
       }
     }
 
-    if (sub.overallTemplateId && configs.length > 0) {
+    // instance 兼容排除（设计 §13.2）：outbound 由协议模板生成，其兼容性 =
+    // 协议模板 singbox_compat vs 订阅绑定版本。不兼容的排除而非报错——
+    // 一个坏配置不能挂掉整个订阅；全部被排除才 400。
+    const compatible = configs.filter((cfg) => {
+      if (!cfg.protocolId) return true; // 无协议来源信息（历史数据）→ 不参与判定
+      const compat = reg.getTemplate(cfg.protocolId)?.singboxCompat ?? null;
+      if (isCompatSatisfied(compat, subVersion)) return true;
+      skipped.push(`${cfg.id} (${cfg.protocolId} requires '${compat ?? '*'}')`);
+      return false;
+    });
+    if (compatible.length === 0 && configs.length > 0) {
+      return c.json({
+        error: {
+          code: 'SBX_NO_COMPATIBLE_INSTANCES',
+          message: `sing-box ${subVersion} is incompatible with every active instance: ${skipped.join('; ')}`,
+        },
+      }, 400);
+    }
+    if (skipped.length > 0) {
+      c.get('logger').warn('subscription delivery: skipped incompatible instances', {
+        path, version: subVersion, skipped: skipped.length,
+      });
+    }
+
+    if (sub.overallTemplateId && compatible.length > 0) {
       // Render via overall template (works with both D1 instances and synced client configs)
       const overallParams = sub.overallParams ? JSON.parse(sub.overallParams) : {};
-      clientConfig = await reg.renderClientOverall(configs, sub.overallTemplateId, overallParams);
+      clientConfig = await reg.renderClientOverall(compatible, sub.overallTemplateId, overallParams);
     } else {
       // Simple merge
       clientConfig = {
         version: '1',
         outbounds: [
-          ...configs.map((c) => c.clientConfig),
+          ...compatible.map((cfg) => cfg.clientConfig),
           { type: 'direct', tag: 'direct' },
         ],
       };
@@ -282,15 +319,30 @@ subscriptions.get('/s/:path', async (c) => {
   await writeDeliveryCache(c.env, c.get('logger'), path, token, sub.active, clientConfig);
 
   // Deliver the raw client config — consumers (sing-box etc.) expect the
-  // config document itself, not a wrapper envelope.
-  return c.json(clientConfig);
+  // config document itself, not a wrapper envelope. The header reports how
+  // many outbounds were dropped for version incompatibility (设计 §13.2).
+  return c.json(clientConfig, 200, {
+    ...(skipped.length > 0 ? { 'X-Sbx-Skipped-Instances': String(skipped.length) } : {}),
+  });
 });
 
 // Validation schemas
+// 订阅绑定版本（设计 §13.1）：必填，semver 格式（docker-tag 安全形状）。
+const singboxVersionSchema = z.string().superRefine((val, ctx) => {
+  if (!isValidSingboxVersion(val)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['singboxVersion'],
+      message: `Invalid sing-box version: '${val}' (expected X.Y.Z[-suffix])`,
+    });
+  }
+});
+
 const createSubSchema = z.object({
   name: z.string().max(128).optional(),
   path: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/, 'Path must be lowercase alphanumeric with hyphens'),
   token: z.string().min(8).max(128).optional(),
+  singboxVersion: singboxVersionSchema,
   overallTemplateId: z.string().optional(),
   overallParams: z.record(z.unknown()).optional(),
   active: z.boolean().optional(),
@@ -300,6 +352,7 @@ const updateSubSchema = z.object({
   name: z.string().min(1).max(128).optional(),
   path: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/, 'Path must be lowercase alphanumeric with hyphens').optional(),
   token: z.string().min(8).max(128).optional(),
+  singboxVersion: singboxVersionSchema.optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: z.record(z.unknown()).optional(),
   active: z.boolean().optional(),
@@ -341,12 +394,13 @@ subscriptions.post('/api/subscriptions', adminAuth, zValidator('json', createSub
 
   try {
     await c.env.DB.prepare(
-      `INSERT INTO subscriptions (id, name, path, overall_template_id, overall_params, token, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO subscriptions (id, name, path, singbox_version, overall_template_id, overall_params, token, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       id,
       subName,
       body.path,
+      body.singboxVersion,
       body.overallTemplateId ?? null,
       JSON.stringify(body.overallParams ?? {}),
       token,
@@ -389,6 +443,7 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
     sets.push('path = ?');
     binds.push(body.path);
   }
+  if (body.singboxVersion !== undefined) { sets.push('singbox_version = ?'); binds.push(body.singboxVersion); }
   if (body.overallTemplateId !== undefined) { sets.push('overall_template_id = ?'); binds.push(body.overallTemplateId); }
   if (body.overallParams !== undefined) { sets.push('overall_params = ?'); binds.push(JSON.stringify(body.overallParams)); }
   if (body.token !== undefined) { sets.push('token = ?'); binds.push(body.token); }
@@ -411,6 +466,14 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
         return c.json({ error: { code: 'SUB_PATH_DUPLICATE', message: 'Path already taken' } }, 409);
       }
       throw e;
+    }
+    // 渲染产物失效（设计 §13.1）：sub_delivery_cache 按 path 键控，版本 /
+    // overall 模板 / 参数 / token 变更后，stale fallback 不得再端旧版本的
+    // 渲染结果（v1 的隐性 bug：不同 version 共享同一缓存行）。
+    if (body.singboxVersion !== undefined || body.overallTemplateId !== undefined ||
+        body.overallParams !== undefined || body.token !== undefined || body.regenerateToken) {
+      await c.env.DB.prepare('DELETE FROM sub_delivery_cache WHERE path = ?')
+        .bind(existing.path).run().catch(() => {});
     }
   }
 

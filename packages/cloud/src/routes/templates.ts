@@ -68,6 +68,42 @@ templates.get('/', async (c) => {
   return c.json({ templates: filtered, filtered_count: all.length - filtered.length });
 });
 
+// GET /api/singbox-versions — 版本目录（设计 §13.3）：聚合所有 overall-docker
+// 模板 singbox_version param 的 enum，去重后按 semver 降序。panel 的 Settings
+// 版本下拉与订阅创建版本下拉共用此端点，不再各自从 docker 模板挖 enum。
+// 独立导出为顶层路由（挂载在 /api/singbox-versions，见 index.ts）。
+export const singboxVersions = new Hono<{ Bindings: Env }>();
+
+singboxVersions.get('/', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    "SELECT params FROM templates WHERE category = 'overall-docker'"
+  ).all<{ params: string }>();
+  const versions = new Set<string>();
+  for (const row of results ?? []) {
+    try {
+      const params = JSON.parse(row.params || '[]');
+      if (!Array.isArray(params)) continue;
+      for (const p of params) {
+        if (p?.name === 'singbox_version' && Array.isArray(p.enum)) {
+          for (const v of p.enum) {
+            if (typeof v === 'string' && isValidSingboxVersion(v)) versions.add(v);
+          }
+        }
+      }
+    } catch { /* malformed params — skip */ }
+  }
+  const sorted = Array.from(versions).sort((a, b) => {
+    const pa = a.split('-')[0].split('.').map(Number);
+    const pb = b.split('-')[0].split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+      const d = (pb[i] || 0) - (pa[i] || 0);
+      if (d !== 0) return d;
+    }
+    return a.localeCompare(b);
+  });
+  return c.json({ versions: sorted });
+});
+
 templates.get('/:id', async (c) => {
   const { id } = c.req.param();
   const tmpl = await c.env.DB.prepare(

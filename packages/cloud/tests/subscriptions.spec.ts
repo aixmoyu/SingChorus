@@ -2,6 +2,7 @@ import { SELF, env } from 'cloudflare:test';
 import { beforeEach } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
 import { resetRegistryCache } from '../src/engine/registry';
+import { adminHeaders, api, jsonBody, seed } from './helpers';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
@@ -37,7 +38,8 @@ async function createSub(
 ): Promise<{ status: number; body: any }> {
   const res = await SELF.fetch('http://localhost/api/subscriptions', {
     method: 'POST', headers: await AUTH(),
-    body: JSON.stringify({ name, path, ...extra }),
+    // 默认绑定 1.14.1（种子模板 compat 范围 >=1.14.0 <1.16.0 的中值）
+    body: JSON.stringify({ name, path, singboxVersion: '1.14.1', ...extra }),
   });
   return { status: res.status, body: await res.json() as any };
 }
@@ -126,9 +128,39 @@ describe('Subscription Management', () => {
     const res = await SELF.fetch('http://localhost/api/subscriptions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'No Auth', path: 'no-auth' }),
+      body: JSON.stringify({ name: 'No Auth', path: 'no-auth', singboxVersion: '1.14.1' }),
     });
     expect(res.status).toBe(401);
+  });
+
+  // --- v2（设计 §13.1）：订阅必绑版本 ---
+  it('POST without singboxVersion → 400（版本必填）', async () => {
+    const res = await SELF.fetch('http://localhost/api/subscriptions', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ name: 'No Version', path: 'no-version' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('POST with malformed singboxVersion → 400', async () => {
+    const { status } = await createSub('Bad Version', 'bad-version', { singboxVersion: 'latest' });
+    expect(status).toBe(400);
+  });
+
+  it('PUT singboxVersion updates the binding; malformed → 400', async () => {
+    const { body: created } = await createSub('Versioned', 'versioned-sub');
+    const ok = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ singboxVersion: '1.15.0' }),
+    });
+    expect(ok.status).toBe(200);
+    expect((await ok.json() as any).subscription.singboxVersion).toBe('1.15.0');
+
+    const bad = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ singboxVersion: '1.12' }),
+    });
+    expect(bad.status).toBe(400);
   });
 });
 
@@ -234,5 +266,91 @@ describe('Subscription Delivery', () => {
 
     const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
     expect(res.status).toBe(403);
+  });
+});
+
+// --- v2（设计 §13）：订阅绑定版本的交付行为 ---
+describe('Subscription Version Binding (delivery)', () => {
+  /** 建节点 + 指定 compat 的协议 + instance，返回 instance 信息。 */
+  async function provisionInstance(compat?: string): Promise<{ nodeId: string }> {
+    const proto: Record<string, unknown> = {
+      id: `proto-${compat ?? 'any'}`,
+      name: 'Proto',
+      version: '1.0.0',
+      serverTemplate: JSON.stringify({ type: 'vless', tag: 'p' }),
+      clientTemplate: JSON.stringify({ type: 'vless', server: '{{ params.domain }}', tag: 'p' }),
+      params: JSON.stringify([{ name: 'domain', type: 'string', required: true }]),
+    };
+    if (compat !== undefined) proto.singboxCompat = compat;
+    const pr = await SELF.fetch('http://localhost/api/protocols', {
+      method: 'POST', headers: await AUTH(), body: JSON.stringify(proto),
+    });
+    expect(pr.status).toBe(201);
+
+    await SELF.fetch('http://localhost/api/nodes', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ name: `node-${compat ?? 'any'}` }),
+    });
+    const nodes = await SELF.fetch('http://localhost/api/nodes', { headers: await AUTH() });
+    const nodeId = ((await nodes.json() as any).nodes[0] as any).id;
+    const inst = await SELF.fetch('http://localhost/api/protocol-instances', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ protocolId: proto.id, nodeId, params: { domain: 'd.example.com' } }),
+    });
+    expect(inst.status).toBe(201);
+    return { nodeId };
+  }
+
+  it('绑定版本与 overall-client 模板冲突 → 400 SBX_VERSION_INCOMPATIBLE', async () => {
+    await seed();
+    await provisionInstance();
+    const sub = subBody(await createSub('Incompat', 'incompat-delivery', {
+      singboxVersion: '1.12.0', // 种子 client-default 要求 >=1.14.0
+      overallTemplateId: 'client-default',
+    }));
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error.code).toBe('SBX_VERSION_INCOMPATIBLE');
+  });
+
+  it('协议不兼容的 instance 被排除（X-Sbx-Skipped-Instances），兼容的正常交付', async () => {
+    await seed();
+    // 旧协议（compat >=1.14.0）+ 新协议（无 compat = 任意版本）
+    await provisionInstance('>=1.14.0');
+    await provisionInstance(undefined);
+    const sub = subBody(await createSub('Skip', 'skip-delivery', { singboxVersion: '1.12.0' }));
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('X-Sbx-Skipped-Instances')).toBe('1');
+    const config = await res.json() as any;
+    const outbounds = config.outbounds.filter((o: any) => o.type === 'vless');
+    expect(outbounds).toHaveLength(1);
+    expect(outbounds[0].server).toBe('d.example.com');
+  });
+
+  it('全部 instance 不兼容 → 400 SBX_NO_COMPATIBLE_INSTANCES', async () => {
+    await seed();
+    await provisionInstance('>=1.14.0');
+    const sub = subBody(await createSub('All Skipped', 'all-skipped', { singboxVersion: '1.12.0' }));
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error.code).toBe('SBX_NO_COMPATIBLE_INSTANCES');
+  });
+
+  it('消费者传 ?version= 不再影响交付（绑定即事实来源）', async () => {
+    await seed();
+    await provisionInstance(undefined);
+    const sub = subBody(await createSub('Bound', 'bound-delivery'));
+    // ?version=1.11.0 是 v1 的 opt-in 参数，v2 已废弃：交付不应因此报错
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}&version=1.11.0`);
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /api/singbox-versions 聚合 docker 模板 enum 并降序返回', async () => {
+    await seed();
+    const res = await api('/api/singbox-versions', { headers: await adminHeaders() });
+    expect(res.status).toBe(200);
+    const body = await jsonBody(res);
+    expect(body.versions).toEqual(['1.15.0', '1.14.1']);
   });
 });

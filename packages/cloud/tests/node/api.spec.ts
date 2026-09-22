@@ -160,7 +160,7 @@ describe('node runtime: API contract over SQLite adapters', () => {
     const created = await api(env, '/api/subscriptions', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: 'node-test-sub' }),
+      body: JSON.stringify({ path: 'node-test-sub', singboxVersion: '1.14.1' }),
     });
     expect(created.status).toBe(201);
     const sub = ((await created.json()) as { subscription: { id: string; token: string; path: string } }).subscription;

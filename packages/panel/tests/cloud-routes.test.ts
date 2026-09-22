@@ -473,19 +473,19 @@ describe('cloud/deploy routes against a stubbed core', () => {
     expect(listBad.status).toBe(503)
 
     const created = await authed(request(app).post('/api/core/cloud/subscriptions'), cookie)
-      .send({ name: 's1', path: 's1' })
+      .send({ name: 's1', path: 's1', singboxVersion: '1.14.1' })
     expect(created.status).toBe(201)
     expect(created.body.subscription.id).toBe('sub-1')
 
     const invalid = await authed(request(app).post('/api/core/cloud/subscriptions'), cookie)
-      .send({ path: 'x'.repeat(65) })
+      .send({ path: 'x'.repeat(65), singboxVersion: '1.14.1' })
     expect(invalid.status).toBe(422)
 
     h.behavior.createSubscription = () => {
       throw coreErr(409, 'TAG_TAKEN', 'taken')
     }
     const createBad = await authed(request(app).post('/api/core/cloud/subscriptions'), cookie)
-      .send({ name: 's1' })
+      .send({ name: 's1', singboxVersion: '1.14.1' })
     expect(createBad.status).toBe(502)
     expect(createBad.body.error.code).toBe('TAG_TAKEN')
 
