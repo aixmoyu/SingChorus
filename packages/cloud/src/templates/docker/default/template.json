@@ -1,7 +1,7 @@
 {
   "services": {
     "sing-box": {
-      "image": "ghcr.io/sagernet/sing-box:latest",
+      "image": "ghcr.io/sagernet/sing-box:v{{ params.singbox_version }}",
       "container_name": "sing-box",
       "restart": "unless-stopped",
       "network_mode": "host",

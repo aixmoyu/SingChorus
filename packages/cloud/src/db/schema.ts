@@ -43,7 +43,21 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
   for (const stmt of CREATE_INDEXES) {
     try { await db.prepare(stmt).run(); } catch { /* index may already exist */ }
   }
+
+  // Idempotent column additions for databases created before the columns were
+  // part of the CREATE TABLE statements above (fresh DBs no-op-fail here).
+  for (const stmt of ALTER_TABLES) {
+    try { await db.prepare(stmt).run(); } catch { /* column may already exist */ }
+  }
 }
+
+// sing-box 版本管理（docs/design/singbox-version-management.md §3.1）：
+// templates.singbox_compat —— 模板声明的兼容范围（NULL = 任意版本）；
+// nodes.singbox_version —— 节点心跳上报的运行版本（舰队可视化）。
+const ALTER_TABLES = [
+  'ALTER TABLE templates ADD COLUMN singbox_compat TEXT',
+  'ALTER TABLE nodes ADD COLUMN singbox_version TEXT',
+];
 
 // Design note: overall template bindings are split by scope —
 //   nodes.server_overall_id / docker_overall_id / server_params  (node-scoped: a node runs one server + one docker compose)
@@ -61,10 +75,12 @@ const CREATE_TABLES = [
     server_overall_id TEXT DEFAULT NULL,
     docker_overall_id TEXT DEFAULT NULL,
     server_params TEXT DEFAULT '{}',
+    singbox_version TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
   // Unified templates table.
   // category: 'protocol' | 'overall-server' | 'overall-client' | 'overall-docker'
+  // singbox_compat: declared sing-box compatibility range (NULL = any version).
   `CREATE TABLE IF NOT EXISTS templates (
     id TEXT PRIMARY KEY,
     category TEXT NOT NULL,
@@ -77,6 +93,7 @@ const CREATE_TABLES = [
     entry_script TEXT,
     params TEXT NOT NULL DEFAULT '[]',
     description TEXT,
+    singbox_compat TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,

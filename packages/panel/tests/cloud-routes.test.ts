@@ -56,6 +56,10 @@ vi.mock('@chorus/core', () => {
     async getTemplates(role?: string) {
       return h.behavior.getTemplates ? h.behavior.getTemplates(role) : [{ id: 't1' }]
     }
+    async getTemplatesWithCount(role?: string) {
+      const templates = h.behavior.getTemplates ? h.behavior.getTemplates(role) : [{ id: 't1' }]
+      return { templates, filtered_count: 0 }
+    }
     async generateConfig(type: string, params: unknown) {
       return h.behavior.generateConfig
         ? h.behavior.generateConfig(type, params)
@@ -96,6 +100,13 @@ vi.mock('@chorus/core', () => {
     }
     async getNodeClients(_fp: string) {
       return []
+    }
+  }
+
+  /** core-provider 用它读取 core 的持久 app config（singbox_version 快照）。 */
+  class LocalStore {
+    loadAppConfig(): Record<string, unknown> {
+      return { ...h.behavior.appConfig }
     }
   }
 
@@ -227,7 +238,7 @@ vi.mock('@chorus/core', () => {
     dispose() {}
   }
 
-  return { ChorusCore, SyncService, CloudClient }
+  return { ChorusCore, SyncService, CloudClient, LocalStore }
 })
 
 const authed = (req: request.Test, cookie: string) => req.set('Cookie', cookie)

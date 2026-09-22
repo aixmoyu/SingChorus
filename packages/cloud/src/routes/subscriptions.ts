@@ -4,6 +4,7 @@ import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
 import { PluginRegistry, ProtocolInstanceConfig } from '../engine/registry';
 import { PluginError } from '../engine/errors';
+import { isValidSingboxVersion, isCompatSatisfied } from '../engine/compat';
 import { parseSubscriptionRow, type SubscriptionRow } from '../engine/types';
 import { hashToken } from '../auth/jwt';
 import { fireAndForget } from '../services/fire-and-forget';
@@ -139,10 +140,16 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<ProtocolInst
   }
 }
 
-// Delivery endpoint: GET /s/{path}?token={token}
+// Delivery endpoint: GET /s/{path}?token={token}[&version=X.Y.Z]
 subscriptions.get('/s/:path', async (c) => {
   const { path } = c.req.param();
   const token = c.req.query('token');
+  // 订阅端可选的消费者 sing-box 版本（显式 opt-in）：与订阅绑定的
+  // overall-client 模板 compat 校验；不传 → 现状行为，无强校验。
+  const consumerVersion = c.req.query('version');
+  if (consumerVersion !== undefined && consumerVersion !== '' && !isValidSingboxVersion(consumerVersion)) {
+    return c.json({ error: { code: 'SBX_BAD_VERSION', message: `Invalid sing-box version: '${consumerVersion}'` } }, 400);
+  }
 
   if (!token) {
     return c.json({ error: { code: 'AUTH_MISSING_TOKEN', message: 'Subscription token required' } }, 401);
@@ -230,6 +237,21 @@ subscriptions.get('/s/:path', async (c) => {
   let clientConfig: Record<string, unknown>;
   try {
     await reg.loadAll();
+
+    // 显式 opt-in 的消费者版本校验：与订阅绑定的 overall-client 模板 compat
+    // 比对，不匹配 → 400 明确报错（模板名 + 所需范围）。
+    if (consumerVersion && sub.overallTemplateId) {
+      const tmpl = reg.getTemplate(sub.overallTemplateId);
+      const compat = tmpl?.singboxCompat ?? null;
+      if (!isCompatSatisfied(compat, consumerVersion)) {
+        return c.json({
+          error: {
+            code: 'SBX_VERSION_INCOMPATIBLE',
+            message: `sing-box ${consumerVersion} is incompatible with subscription template '${sub.overallTemplateId}' (requires '${compat ?? '*'}')`,
+          },
+        }, 400);
+      }
+    }
 
     if (sub.overallTemplateId && configs.length > 0) {
       // Render via overall template (works with both D1 instances and synced client configs)

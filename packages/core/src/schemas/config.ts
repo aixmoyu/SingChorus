@@ -58,6 +58,8 @@ export interface AppConfig {
   /** Deploy artifacts directory (compose, entry.sh, config.json, tls/). */
   docker_dir?: string
   singbox_image: string
+  /** 本机 sing-box 版本 pin；'' = 未设置（跟随 docker 模板默认 / 原镜像）。 */
+  singbox_version: string
   validate_timeout_seconds: number
   prepull_singbox_image: boolean
   node_name: string

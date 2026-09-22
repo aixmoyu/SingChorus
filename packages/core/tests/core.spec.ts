@@ -257,6 +257,8 @@ describe('ChorusCore.deploy / stopDeploy', () => {
       { type: 'hysteria2', listen_port: 9800 },
       'services: {}',
       '#!/bin/sh',
+      // 第 4 参为 deploy meta（§4.3）：旧 cloud 响应无版本字段 → undefined
+      { singboxVersion: undefined, singboxImage: undefined, deployedAt: expect.any(String) },
     );
     expect(core.configs.get('deploy-1').deployed).toBe(true);
     expect(core.configs.get('deploy-2').deployed).toBe(false);

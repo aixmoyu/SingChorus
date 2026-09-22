@@ -80,6 +80,7 @@ function asProtocol(t: Template): Protocol {
     clientTemplate: t.clientTemplate,
     params: t.params,
     description: t.description,
+    singboxCompat: t.singboxCompat,
   } as Protocol;
 }
 
@@ -96,6 +97,7 @@ function asOverall(t: Template): OverallTemplate {
     config: t.config,
     entryScript: t.entryScript,
     description: t.description,
+    singboxCompat: t.singboxCompat,
   } as OverallTemplate;
 }
 
@@ -188,6 +190,18 @@ export class PluginRegistry {
     const t = sharedTemplates.get(id);
     if (!t || t.category !== 'protocol') return undefined;
     return asProtocol(t);
+  }
+
+  /** Raw unified template (any category) — used by version-compat checks. */
+  getTemplate(id: string): Template | undefined {
+    return sharedTemplates.get(id);
+  }
+
+  /** Default value of a param declared in the template's config.json
+   *  (undefined when the template or the param doesn't exist). */
+  getParamDefault(id: string, paramName: string): unknown {
+    const defs = (this.parsed(id).config?.params ?? []) as Array<{ name?: string; default?: unknown }>;
+    return defs.find((d) => d.name === paramName)?.default;
   }
 
   getOverallTemplate(id: string): OverallTemplate | undefined {
@@ -300,7 +314,7 @@ export class PluginRegistry {
     overallId: string,
     overallParams: Record<string, unknown>,
     overrides: DockerOverrides = {},
-  ): Promise<{ composeYaml: string; entrySh: string }> {
+  ): Promise<{ composeYaml: string; entrySh: string; singboxImage: string | null }> {
     const overall = this.getOverallTemplate(overallId);
     if (!overall) throw new PluginError('PLG_UNKNOWN_TYPE', `Docker template not found: ${overallId}`);
     if (overall.category !== 'overall-docker') throw new PluginError('PLG_UNKNOWN_TYPE', `Template '${overallId}' is not a docker template`);
@@ -315,6 +329,15 @@ export class PluginRegistry {
     // Pure compose YAML — the entry script is returned separately and must
     // never be appended to the yaml (the compose file is fed to `docker compose`).
     const composeYaml = renderDocker(renderedCompose, overrides);
-    return { composeYaml, entrySh: overall.entryScript ?? '' };
+
+    // Post-substitution image reference of the `sing-box` service — surfaced
+    // so deploy responses can pin/report the exact running version.
+    const services = renderedCompose.services as Record<string, Record<string, unknown>> | undefined;
+    const image = services?.['sing-box']?.image;
+    return {
+      composeYaml,
+      entrySh: overall.entryScript ?? '',
+      singboxImage: typeof image === 'string' ? image : null,
+    };
   }
 }

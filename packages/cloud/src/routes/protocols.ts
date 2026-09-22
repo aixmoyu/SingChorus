@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
 import { invalidateTemplateCache } from '../engine/registry';
+import { isValidSingboxVersion, isValidCompatRange, isCompatSatisfied } from '../engine/compat';
 
 const protocolCreateSchema = z.object({
   id: z.string().min(1).max(64),
@@ -12,15 +13,27 @@ const protocolCreateSchema = z.object({
   clientTemplate: z.string().min(1),
   params: z.string().default('[]'),
   description: z.string().max(512).optional(),
+  singboxCompat: z.string().optional(),
 });
 
 const protocols = new Hono<{ Bindings: Env }>();
 
 protocols.get('/', async (c) => {
+  const version = c.req.query('singbox_version');
+  if (version !== undefined && version !== null && version !== '' && !isValidSingboxVersion(version)) {
+    return c.json({ error: { code: 'SBX_BAD_VERSION', message: `Invalid sing-box version: '${version}'` } }, 400);
+  }
   const { results } = await c.env.DB.prepare(
     "SELECT * FROM templates WHERE category = 'protocol' ORDER BY created_at DESC"
-  ).all();
-  return c.json({ protocols: results });
+  ).all<Record<string, unknown>>();
+  const all = results ?? [];
+  if (!version) {
+    return c.json({ protocols: all });
+  }
+  // 服务端兼容过滤（纵深防御第 1 层）：仅返回 singbox_compat 满足本机版本的
+  // 协议；compat 为 NULL 的行视为兼容任意版本。filtered_count 供 UI 提示。
+  const filtered = all.filter((row) => isCompatSatisfied(row.singbox_compat as string | null, version));
+  return c.json({ protocols: filtered, filtered_count: all.length - filtered.length });
 });
 
 protocols.get('/:id', async (c) => {
@@ -36,10 +49,13 @@ protocols.get('/:id', async (c) => {
 
 protocols.post('/', adminAuth, zValidator('json', protocolCreateSchema), async (c) => {
   const body = c.req.valid('json');
+  if (body.singboxCompat !== undefined && !isValidCompatRange(body.singboxCompat)) {
+    return c.json({ error: { code: 'SBX_BAD_RANGE', message: `Invalid singbox_compat range: '${body.singboxCompat}'` } }, 400);
+  }
   try {
     await c.env.DB.prepare(
-      `INSERT INTO templates (id, category, name, version, server_template, client_template, params, description)
-       VALUES (?, 'protocol', ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO templates (id, category, name, version, server_template, client_template, params, description, singbox_compat)
+       VALUES (?, 'protocol', ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       body.id,
       body.name,
@@ -48,6 +64,7 @@ protocols.post('/', adminAuth, zValidator('json', protocolCreateSchema), async (
       body.clientTemplate,
       body.params,
       body.description ?? null,
+      body.singboxCompat ?? null,
     ).run();
 
     const proto = await c.env.DB.prepare(
@@ -66,6 +83,9 @@ protocols.post('/', adminAuth, zValidator('json', protocolCreateSchema), async (
 protocols.put('/:id', adminAuth, zValidator('json', protocolCreateSchema.omit({ id: true }).partial()), async (c) => {
   const { id } = c.req.param();
   const body = c.req.valid('json');
+  if (body.singboxCompat !== undefined && !isValidCompatRange(body.singboxCompat)) {
+    return c.json({ error: { code: 'SBX_BAD_RANGE', message: `Invalid singbox_compat range: '${body.singboxCompat}'` } }, 400);
+  }
   const existing = await c.env.DB.prepare(
     "SELECT * FROM templates WHERE id = ? AND category = 'protocol'"
   ).bind(id).first();
@@ -81,6 +101,7 @@ protocols.put('/:id', adminAuth, zValidator('json', protocolCreateSchema.omit({ 
   if (body.clientTemplate !== undefined) { sets.push('client_template = ?'); values.push(body.clientTemplate); }
   if (body.params !== undefined) { sets.push('params = ?'); values.push(body.params); }
   if (body.description !== undefined) { sets.push('description = ?'); values.push(body.description); }
+  if (body.singboxCompat !== undefined) { sets.push('singbox_compat = ?'); values.push(body.singboxCompat); }
 
   if (sets.length > 0) {
     values.push(id);

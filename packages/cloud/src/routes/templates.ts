@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
 import { invalidateTemplateCache } from '../engine/registry';
+import { isValidSingboxVersion, isValidCompatRange, isCompatSatisfied } from '../engine/compat';
 
 // Overall templates use categories: overall-server, overall-client, overall-docker.
 // The API also accepts short names (server/client/docker) and maps them.
@@ -35,12 +36,17 @@ const templateCreateSchema = z.object({
   config: z.string().optional(),
   entryScript: z.string().optional(),
   description: z.string().max(512).optional(),
+  singboxCompat: z.string().optional(),
 });
 
 const templates = new Hono<{ Bindings: Env }>();
 
 templates.get('/', async (c) => {
   const categoryRaw = c.req.query('category');
+  const version = c.req.query('singbox_version');
+  if (version !== undefined && version !== null && version !== '' && !isValidSingboxVersion(version)) {
+    return c.json({ error: { code: 'SBX_BAD_VERSION', message: `Invalid sing-box version: '${version}'` } }, 400);
+  }
   let query = "SELECT * FROM templates WHERE category IN ('overall-server', 'overall-client', 'overall-docker')";
   const bind: unknown[] = [];
   if (categoryRaw) {
@@ -51,8 +57,15 @@ templates.get('/', async (c) => {
     }
   }
   query += " ORDER BY created_at DESC";
-  const { results } = await c.env.DB.prepare(query).bind(...bind).all();
-  return c.json({ templates: results });
+  const { results } = await c.env.DB.prepare(query).bind(...bind).all<Record<string, unknown>>();
+  const all = results ?? [];
+  if (!version) {
+    return c.json({ templates: all });
+  }
+  // 服务端兼容过滤（纵深防御第 1 层）：Deploy 页的 server 模板下拉由此只
+  // 剩兼容模板；compat 为 NULL 的行视为兼容任意版本。filtered_count 供 UI 提示。
+  const filtered = all.filter((row) => isCompatSatisfied(row.singbox_compat as string | null, version));
+  return c.json({ templates: filtered, filtered_count: all.length - filtered.length });
 });
 
 templates.get('/:id', async (c) => {
@@ -74,11 +87,14 @@ templates.post('/', adminAuth, zValidator('json', templateCreateSchema), async (
   if (jsonErr) {
     return c.json({ error: { code: 'TMPL_INVALID_JSON', message: jsonErr } }, 400);
   }
+  if (body.singboxCompat !== undefined && !isValidCompatRange(body.singboxCompat)) {
+    return c.json({ error: { code: 'SBX_BAD_RANGE', message: `Invalid singbox_compat range: '${body.singboxCompat}'` } }, 400);
+  }
 
   try {
     await c.env.DB.prepare(
-      `INSERT INTO templates (id, category, name, version, template_content, config, entry_script, params, description)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?)`
+      `INSERT INTO templates (id, category, name, version, template_content, config, entry_script, params, description, singbox_compat)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)`
     ).bind(
       body.id,
       category,
@@ -88,6 +104,7 @@ templates.post('/', adminAuth, zValidator('json', templateCreateSchema), async (
       body.config ?? null,
       body.entryScript ?? null,
       body.description ?? null,
+      body.singboxCompat ?? null,
     ).run();
 
     const tmpl = await c.env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(body.id).first();
@@ -104,6 +121,9 @@ templates.post('/', adminAuth, zValidator('json', templateCreateSchema), async (
 templates.put('/:id', adminAuth, zValidator('json', templateCreateSchema.omit({ id: true, category: true }).partial()), async (c) => {
   const { id } = c.req.param();
   const body = c.req.valid('json');
+  if (body.singboxCompat !== undefined && !isValidCompatRange(body.singboxCompat)) {
+    return c.json({ error: { code: 'SBX_BAD_RANGE', message: `Invalid singbox_compat range: '${body.singboxCompat}'` } }, 400);
+  }
   const existing = await c.env.DB.prepare(
     "SELECT * FROM templates WHERE id = ? AND category IN ('overall-server', 'overall-client', 'overall-docker')"
   ).bind(id).first();
@@ -127,6 +147,7 @@ templates.put('/:id', adminAuth, zValidator('json', templateCreateSchema.omit({ 
   }
   if (body.entryScript !== undefined) { sets.push('entry_script = ?'); values.push(body.entryScript); }
   if (body.description !== undefined) { sets.push('description = ?'); values.push(body.description); }
+  if (body.singboxCompat !== undefined) { sets.push('singbox_compat = ?'); values.push(body.singboxCompat); }
 
   if (sets.length > 0) {
     values.push(id);

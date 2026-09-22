@@ -26,6 +26,12 @@
           <n-button type="warning" :loading="busy" :disabled="busy || deployStore.deployStatus?.status !== 'running'" @click="handleRestart">Restart</n-button>
           <n-button type="error" :loading="busy" :disabled="busy || deployStore.deployStatus?.status !== 'running'" @click="handleStop">Stop</n-button>
         </div>
+        <n-alert v-if="drifted" type="warning">
+          Configured sing-box version ({{ configuredVersion || 'follow template default' }}) differs from the deployed one ({{ deployedVersion || 'unknown' }}). Redeploy to apply.
+        </n-alert>
+        <n-text v-else-if="deployStore.deployMeta" depth="3">
+          Deployed: sing-box {{ deployedVersion || 'unknown' }} · {{ deployStore.deployMeta.singboxImage || '' }}
+        </n-text>
       </div>
     </n-card>
 
@@ -45,13 +51,15 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NCard, NTag, NButton, NCode, NFormItem, NSelect, NSpin, useMessage } from 'naive-ui'
+import { NCard, NTag, NButton, NCode, NFormItem, NSelect, NSpin, NAlert, NText, useMessage } from 'naive-ui'
 import { useDeployStore } from '@/stores/deploy'
 import { useTemplateStore } from '@/stores/template'
+import { useSettingsStore } from '@/stores/settings'
 import { extractApiError } from '@/lib/http'
 
 const deployStore = useDeployStore()
 const templateStore = useTemplateStore()
+const settings = useSettingsStore()
 const message = useMessage()
 let pollTimer: ReturnType<typeof setInterval> | null = null
 const logContainerRef = ref<HTMLElement | null>(null)
@@ -88,11 +96,24 @@ const deployStatusText = computed(() => {
 })
 const logText = computed(() => deployStore.logs.join('\n'))
 
+// --- sing-box 版本 drift（§5.3）---
+/** Settings 里 pin 的版本（'' = 跟随模板默认）。 */
+const configuredVersion = computed(() => settings.singboxVersion || '')
+/** 上次成功部署时生效的版本；meta 为 null（旧部署）→ unknown。 */
+const deployedVersion = computed(() => deployStore.deployMeta?.singboxVersion || '')
+/** 配置版本与部署版本不一致 → 提示重新部署。 */
+const drifted = computed(() => {
+  if (!deployStore.deployMeta) return false
+  return configuredVersion.value !== deployedVersion.value
+})
+
 async function handleDeploy() {
   await runAction(
     () => deployStore.deploy(serverTemplateId.value ? { serverOverallId: serverTemplateId.value } : {}),
     'Deploy failed',
   )
+  // 部署成功后刷新元信息，让 drift 提示消失 / 显示新版本。
+  deployStore.fetchDeployMeta().catch(() => { /* meta is best-effort */ })
 }
 async function handleRestart() { await runAction(() => deployStore.restartDeploy(), 'Restart failed') }
 async function handleStop() { await runAction(() => deployStore.stopDeploy(), 'Stop failed') }
@@ -152,6 +173,8 @@ onMounted(async () => {
     await deployStore.fetchDeployStatus()
     await deployStore.fetchLogs(100)
   } catch { /* core may be unreachable on first load */ }
+  settings.fetchSettings().catch(() => { /* configured version stays '' */ })
+  deployStore.fetchDeployMeta().catch(() => { /* meta stays null */ })
   templateStore.fetchTemplates('server').catch(() => { /* selector stays empty */ })
   startPolling()
 })

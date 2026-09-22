@@ -39,6 +39,17 @@ router.post('/deploy', async (req, res) => {
   }
 })
 
+router.get('/deploy/meta', async (_req, res) => {
+  try {
+    const core = getCore()
+    // 上次成功部署的版本/镜像/时间；旧部署无记录 → null（前端显示 unknown）。
+    res.json({ meta: core.deployMeta() })
+  } catch (err) {
+    const e = toCoreError(err)
+    res.status(503).json(toErrorEnvelope(e.code || 'DOCKER_UNAVAILABLE', e.message || 'Docker unavailable'))
+  }
+})
+
 router.get('/deploy/status', async (_req, res) => {
   try {
     const core = getCore()

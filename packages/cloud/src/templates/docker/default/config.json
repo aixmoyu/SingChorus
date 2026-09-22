@@ -1,4 +1,13 @@
 {
   "$schema": "../../overall-config.schema.json",
-  "params": []
+  "singbox_compat": ">=1.14.0 <1.16.0",
+  "params": [
+    {
+      "name": "singbox_version",
+      "type": "select",
+      "default": "1.14.1",
+      "enum": ["1.14.1", "1.15.0"],
+      "description": "sing-box image tag (without v prefix)"
+    }
+  ]
 }

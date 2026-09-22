@@ -181,10 +181,12 @@ export class ChorusCore {
 
     // 1. Node heartbeat (best-effort — a registration failure shouldn't block config sync).
     try {
+      const appCfg = this.store.loadAppConfig();
       await this.cloud.registerNode({
         fingerprint: identity.fingerprint,
         name: identity.name,
         address: identity.address,
+        ...(appCfg.singbox_version ? { singboxVersion: appCfg.singbox_version } : {}),
       });
     } catch (err) {
       this.logger.warn('sync: node heartbeat failed', { error: err instanceof Error ? err.message : String(err) });
@@ -421,24 +423,40 @@ export class ChorusCore {
    *  subscriptions. No local fallback: if the cloud can't render, deploy
    *  fails loudly instead of silently serving a stale local config.
    *  `serverOverallId` / `dockerOverallId` select non-default overall
-   *  templates on the cloud; omitted ids fall back to the cloud defaults. */
+   *  templates on the cloud; omitted ids fall back to the cloud defaults.
+   *  sing-box 版本由 core 从 AppConfig 注入（§4.3），不进 panel/ctl 请求体。 */
   async deploy(options: { serverOverallId?: string; dockerOverallId?: string } = {}) {
     const enabled = this.configs.listEnabled();
     if (enabled.length === 0) {
       throw new AppError(ERRORS.CFG_NONE_ENABLED.code, ERRORS.CFG_NONE_ENABLED.message, ERRORS.CFG_NONE_ENABLED.status);
     }
 
+    const version = this.store.loadAppConfig().singbox_version;
     const instances = enabled.map((e) => ({
       id: e.name,
+      protocolId: e.type,
       serverConfig: e.server_config,
       clientConfig: e.client_config,
     }));
 
-    const rendered = await this.cloud.renderDeploy(instances, options);
-    await this.docker.deployRendered(rendered.serverConfig, rendered.composeYaml, rendered.entrySh);
+    const rendered = await this.cloud.renderDeploy(instances, {
+      ...options,
+      ...(version ? { singboxVersion: version } : {}),
+    });
+    await this.docker.deployRendered(rendered.serverConfig, rendered.composeYaml, rendered.entrySh, {
+      singboxVersion: rendered.singboxVersion,
+      singboxImage: rendered.singboxImage,
+      deployedAt: new Date().toISOString(),
+    });
     // 部署成功：本批 enabled 配置进入部署集合（其余条目自动清出），随后由
     // panel 触发同步，把 deployed 状态上报云端供订阅过滤。
     this.configs.markDeployed(enabled.map((e) => e.name));
+  }
+
+  /** Last successful deploy metadata (version/image/time) — null for
+   *  pre-feature deploys. Panel reads this for the drift hint. */
+  deployMeta(): { singboxVersion?: string; singboxImage?: string; deployedAt?: string } | null {
+    return this.docker.getDeployMeta();
   }
 
   async stopDeploy() {

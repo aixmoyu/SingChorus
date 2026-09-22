@@ -41,12 +41,14 @@ const CATEGORY_TO_ROLE: Record<string, TemplateInfo['role']> = {
 export function normalizeTemplate(t: Record<string, unknown>): TemplateInfo {
   const rawSchema = (t.schema as Record<string, unknown>) || {}
   const category = String(t.category ?? t.role ?? '')
+  const compat = (t.singbox_compat ?? t.singboxCompat) as string | undefined
   return {
     id: String(t.id ?? ''),
     type: (t.type as string) || (t.id as string) || '',
     name: t.name as string,
     version: t.version as string,
     role: CATEGORY_TO_ROLE[category] ?? 'protocol',
+    singbox_compat: compat || undefined,
     schema: {
       params: tryParseParams(t.params) || tryParseParams(rawSchema.params) || [],
       server_template:
@@ -85,6 +87,8 @@ export const useTemplateStore = defineStore('template', () => {
   const templates = ref<TemplateInfo[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  /** 被节点 sing-box 版本过滤隐藏的模板数（0 或未启用版本时无意义）。 */
+  const filteredCount = ref(0)
 
   async function fetchTemplates(role?: string): Promise<void> {
     loading.value = true
@@ -93,6 +97,7 @@ export const useTemplateStore = defineStore('template', () => {
       const res = await http.get('/core/cloud/templates', { params: role ? { role } : {} })
       const raw = res.data.templates || []
       templates.value = raw.map(normalizeTemplate)
+      filteredCount.value = Number(res.data.filtered_count ?? 0)
     } catch (e) {
       const msg =
         (e as { response?: { data?: { message?: string } }; message?: string }).response?.data
@@ -114,5 +119,5 @@ export const useTemplateStore = defineStore('template', () => {
     return normalizeGenerateResponse(res.data)
   }
 
-  return { templates, loading, error, fetchTemplates, generateFromTemplate }
+  return { templates, loading, error, filteredCount, fetchTemplates, generateFromTemplate }
 })

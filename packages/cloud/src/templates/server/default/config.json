@@ -1,4 +1,5 @@
 {
   "$schema": "../../overall-config.schema.json",
+  "singbox_compat": ">=1.14.0 <1.16.0",
   "params": []
 }

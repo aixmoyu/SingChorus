@@ -8,6 +8,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const nodeName = ref('')
   const nodeAddress = ref('')
   const effectiveCloudUrl = ref('')
+  /** 本机 sing-box 版本 pin；'' = 未设置（跟随 docker 模板默认）。 */
+  const singboxVersion = ref('')
 
   async function fetchSettings() {
     const res = await http.get('/settings')
@@ -16,20 +18,30 @@ export const useSettingsStore = defineStore('settings', () => {
     nodeName.value = res.data.node_name || ''
     nodeAddress.value = res.data.node_address || ''
     effectiveCloudUrl.value = res.data.effective_cloud_url || ''
+    singboxVersion.value = res.data.singbox_version || ''
   }
 
-  async function saveSettings(url?: string, token?: string, nodeNameValue?: string, nodeAddressValue?: string) {
+  async function saveSettings(
+    url?: string,
+    token?: string,
+    nodeNameValue?: string,
+    nodeAddressValue?: string,
+    singboxVersionValue?: string,
+  ) {
     const res = await http.post('/settings', {
       core_url: url,
       core_token: token,
       node_name: nodeNameValue,
       node_address: nodeAddressValue,
+      // 仅在显式传入时携带，避免旧调用方意外清空版本。
+      ...(singboxVersionValue !== undefined ? { singbox_version: singboxVersionValue } : {}),
     })
     coreUrl.value = res.data.core_url
     coreToken.value = res.data.core_token
     nodeName.value = res.data.node_name || ''
     nodeAddress.value = res.data.node_address || ''
     effectiveCloudUrl.value = res.data.effective_cloud_url || ''
+    if (singboxVersionValue !== undefined) singboxVersion.value = singboxVersionValue
   }
 
   async function testConnection() {
@@ -43,5 +55,5 @@ export const useSettingsStore = defineStore('settings', () => {
     return res.data.reachable as boolean
   }
 
-  return { coreUrl, coreToken, nodeName, nodeAddress, effectiveCloudUrl, fetchSettings, saveSettings, testConnection, testCandidate }
+  return { coreUrl, coreToken, nodeName, nodeAddress, effectiveCloudUrl, singboxVersion, fetchSettings, saveSettings, testConnection, testCandidate }
 })

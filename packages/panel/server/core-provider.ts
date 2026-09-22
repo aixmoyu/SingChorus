@@ -12,7 +12,7 @@
  * mutations route through `triggerSync()` and a background timer keeps
  * retrying failed pushes and pulling other nodes' configs.
  */
-import { ChorusCore, SyncService } from '@chorus/core'
+import { ChorusCore, SyncService, LocalStore } from '@chorus/core'
 import { loadConfig } from './config.js'
 import { logger } from './logger.js'
 import { currentRequestId } from './request-context.js'
@@ -40,29 +40,45 @@ let syncTimer: ReturnType<typeof setInterval> | null = null
 /** Background tick: retry failed pushes every 30s (SyncService adds backoff). */
 const SYNC_TICK_MS = 30_000
 
+/**
+ * Read-only view of core's persistent app config (`~/.singchorus/data/`).
+ * singbox_version / singbox_image live in the core store — NOT in the panel
+ * config file — so that ctl (a separate process sharing the same data dir)
+ * and panel see one source of truth. The snapshot comparison below picks up
+ * changes from either side.
+ */
+const coreStore = new LocalStore()
+
 interface PanelConfigSnapshot {
   cloudUrl: string
   cloudToken: string
+  singboxVersion: string
+  singboxImage: string
 }
 
 function snapshot(): PanelConfigSnapshot {
   const cfg = loadConfig()
+  const app = coreStore.loadAppConfig()
   return {
     cloudUrl: resolveCloudUrl(),
     cloudToken: cfg.core_token || '',
+    singboxVersion: app.singbox_version || '',
+    singboxImage: app.singbox_image || '',
   }
 }
 
 /**
  * Get the shared `ChorusCore` instance, recreating it when the underlying
- * config (URL / token) changes.
+ * config (URL / token / sing-box version-image pin) changes.
  */
 export function getCore(): ChorusCore {
   const snap = snapshot()
   if (cachedInstance && cachedConfigRef) {
     if (
       cachedConfigRef.cloudUrl === snap.cloudUrl &&
-      cachedConfigRef.cloudToken === snap.cloudToken
+      cachedConfigRef.cloudToken === snap.cloudToken &&
+      cachedConfigRef.singboxVersion === snap.singboxVersion &&
+      cachedConfigRef.singboxImage === snap.singboxImage
     ) {
       return cachedInstance
     }
@@ -70,6 +86,8 @@ export function getCore(): ChorusCore {
   cachedInstance = new ChorusCore({
     cloud_url: snap.cloudUrl,
     cloud_token: snap.cloudToken,
+    singbox_version: snap.singboxVersion,
+    singbox_image: snap.singboxImage,
   }, {
     // core 日志统一进 pino（component: core）；出站请求自动携带当前
     // X-Request-ID，panel → cloud 全链路可追踪。

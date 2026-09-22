@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { DockerManager, DeployInProgressError } from '../src/services/docker-manager.js';
+import type { DeployMeta } from '../src/services/docker-manager.js';
 
 // mock child_process.execFile：按 handler 路由 docker 子命令，避免真实 docker 依赖。
 const execFileMock = vi.fn();
@@ -176,6 +177,52 @@ describe('DockerManager.deployRendered', () => {
     await expect(mgr.deployRendered({}, 'yaml\n', 'sh\n')).rejects.toBeInstanceOf(DeployInProgressError);
     // 锁文件未被误删（持有者仍持有）
     expect(existsSync(join(dir, '.deploy.lock'))).toBe(true);
+  });
+});
+
+describe('DockerManager deploy-meta（§4.4）', () => {
+  const healthy: Handler = (_c, args, cb) => {
+    if (sub(args) === 'ps') return setImmediate(() => cb(null, '[{"State":"running","Health":"healthy"}]', ''));
+    return setImmediate(() => cb(null, '', ''));
+  };
+
+  it('成功部署 + meta → deploy-meta.json 原子落盘，getDeployMeta 可读回', async () => {
+    handler = healthy;
+    const { mgr, dir } = newMgr();
+    const meta: DeployMeta = { singboxVersion: '1.12.9', singboxImage: 'ghcr.io/sagernet/sing-box:1.12.9', deployedAt: '2026-09-22T00:00:00.000Z' };
+    await mgr.deployRendered({}, 'services: {}\n', '#!/bin/sh\n', meta);
+    expect(JSON.parse(readFileSync(join(dir, 'deploy-meta.json'), 'utf-8'))).toEqual(meta);
+    expect(mgr.getDeployMeta()).toEqual(meta);
+  });
+
+  it('部署失败（健康检查超时）→ 不写 deploy-meta.json，避免留下「看似成功」的记录', async () => {
+    const { mgr, dir } = newMgr();
+    handler = (_c, args, cb) => {
+      if (sub(args) === 'ps') return setImmediate(() => cb(null, '[{"State":"exited"}]', ''));
+      return setImmediate(() => cb(null, '', ''));
+    };
+    vi.useFakeTimers();
+    const pending = mgr.deployRendered({}, 'services: {}\n', '#!/bin/sh\n', { singboxVersion: '1.12.9' });
+    const assertion = expect(pending).rejects.toThrow(/failed to become healthy/i);
+    await vi.advanceTimersByTimeAsync(31_000);
+    await assertion;
+    expect(existsSync(join(dir, 'deploy-meta.json'))).toBe(false);
+    expect(mgr.getDeployMeta()).toBeNull();
+  });
+
+  it('不带 meta 的旧式部署 → 不写文件；旧部署（无文件）getDeployMeta → null', async () => {
+    handler = healthy;
+    const { mgr } = newMgr();
+    expect(mgr.getDeployMeta()).toBeNull(); // 旧部署缺失容错
+    await mgr.deployRendered({}, 'services: {}\n', '#!/bin/sh\n');
+    expect(mgr.getDeployMeta()).toBeNull();
+  });
+
+  it('deploy-meta.json 内容损坏 → getDeployMeta 返回 null 而非抛错', async () => {
+    const { mgr, dir } = newMgr();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'deploy-meta.json'), '{broken');
+    expect(mgr.getDeployMeta()).toBeNull();
   });
 });
 

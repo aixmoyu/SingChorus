@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { ChorusCore } from '@chorus/core';
+import { ChorusCore, deriveSingboxImage } from '@chorus/core';
 import { isJson } from '../config.js';
 import { fail, parseParams, printConfigs, printConfigDetail, printTemplates, printJson, printOk, confirm } from '../utils.js';
 
@@ -9,6 +9,51 @@ export const configCommand = new Command('config')
 function getCore(): ChorusCore {
   return new ChorusCore();
 }
+
+/** 与 cloud/panel 一致的版本格式约束（'' = 未设置）。 */
+const SINGBOX_VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+
+configCommand
+  .command('get [key]')
+  .description('查看应用配置（当前仅支持 key: singbox_version）')
+  .action((key?: string) => {
+    if (key !== undefined && key !== 'singbox_version') {
+      fail(`不支持的配置项 '${key}'（当前仅支持: singbox_version）`);
+    }
+    const core = getCore();
+    const cfg = core.getAppConfig();
+    const version = cfg.singbox_version || '';
+    if (isJson()) {
+      printJson({ singbox_version: version, singbox_image: deriveSingboxImage(version, cfg.singbox_image) });
+      return;
+    }
+    if (version) {
+      console.log(`singbox_version: ${version}`);
+      console.log(`singbox_image:   ${deriveSingboxImage(version, cfg.singbox_image)}`);
+    } else {
+      console.log('singbox_version: （未设置 — 跟随 docker 模板默认）');
+    }
+  });
+
+configCommand
+  .command('set <key> <value>')
+  .description('设置应用配置（当前仅支持 key: singbox_version，空串清除）')
+  .action((key: string, value: string) => {
+    if (key !== 'singbox_version') {
+      fail(`不支持的配置项 '${key}'（当前仅支持: singbox_version）`);
+    }
+    if (value && !SINGBOX_VERSION_RE.test(value)) {
+      fail(`无效版本 '${value}'，需要 X.Y.Z 格式（可带 -prerelease），例如 1.12.9`);
+    }
+    const core = getCore();
+    core.updateAppConfig({ singbox_version: value });
+    if (isJson()) {
+      printJson({ singbox_version: value, cleared: value === '' });
+      return;
+    }
+    if (value) console.log(`\x1b[32m\u2705 singbox_version 已设为 ${value}，下次部署生效\x1b[0m`);
+    else console.log('\x1b[32m\u2705 singbox_version 已清除（跟随 docker 模板默认）\x1b[0m');
+  });
 
 configCommand
   .command('list')

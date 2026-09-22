@@ -12,6 +12,13 @@
 
     <template v-if="step === 1">
       <n-card title="Select a Protocol Template">
+        <n-alert
+          v-if="templateStore.filteredCount > 0"
+          type="info"
+          style="margin-bottom: var(--space-md)"
+        >
+          {{ templateStore.filteredCount }} template(s) hidden — incompatible with the pinned sing-box version. Adjust it in Settings.
+        </n-alert>
         <n-grid :cols="3" :x-gap="12" :y-gap="12" :xs="1" :s="2" :m="3" responsive="screen">
           <n-gi v-for="t in protocolTemplates" :key="t.id">
             <n-card
@@ -26,6 +33,9 @@
             >
               <n-h4>{{ t.name }}</n-h4>
               <n-text depth="3">{{ t.type }} — v{{ t.version }}</n-text>
+              <div v-if="t.singbox_compat" class="compat-row">
+                <n-tag size="small" :bordered="false">sing-box {{ t.singbox_compat }}</n-tag>
+              </div>
             </n-card>
           </n-gi>
         </n-grid>
@@ -95,7 +105,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
-import { NSteps, NStep, NCard, NGrid, NGi, NH4, NH5, NText, NForm, NFormItem, NInput, NInputNumber, NSelect, NSwitch, NButton, NCode } from 'naive-ui'
+import { NSteps, NStep, NCard, NGrid, NGi, NH4, NH5, NText, NForm, NFormItem, NInput, NInputNumber, NSelect, NSwitch, NButton, NCode, NTag, NAlert } from 'naive-ui'
 import http, { extractApiError } from '@/lib/http'
 import { useConfigStore } from '@/stores/config'
 import { useTemplateStore } from '@/stores/template'
@@ -263,5 +273,9 @@ onMounted(async () => {
 .template-card:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+.compat-row {
+  margin-top: var(--space-sm);
 }
 </style>

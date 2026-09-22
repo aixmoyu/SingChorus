@@ -39,6 +39,26 @@ function execFileAsync(cmd: string, args: string[], timeout: number): Promise<{ 
   });
 }
 
+const DEFAULT_SINGBOX_IMAGE = 'ghcr.io/sagernet/sing-box:latest';
+
+/**
+ * Derive the effective sing-box image from the pinned version (§4.1):
+ *  - version set → replace the tag of `baseImage` with `v${version}`
+ *  - version empty → return `baseImage` untouched (advanced users may point
+ *    it at a fully custom image)
+ * The tag is split only at the first ':' after the last '/' so registries
+ * with a port (`registry.example.com:5000/sing-box:latest`) keep working.
+ */
+export function deriveSingboxImage(version: string | undefined, baseImage: string): string {
+  const base = baseImage || DEFAULT_SINGBOX_IMAGE;
+  const v = version?.trim();
+  if (!v) return base;
+  const slash = base.lastIndexOf('/');
+  const colon = base.indexOf(':', slash + 1);
+  const repo = colon === -1 ? base : base.slice(0, colon);
+  return `${repo}:v${v}`;
+}
+
 export class SingboxValidator {
   private image: string;
   private timeout: number;
@@ -49,10 +69,10 @@ export class SingboxValidator {
   private queue: Promise<void> = Promise.resolve();
 
   constructor(
-    config: Pick<AppConfig, 'singbox_image' | 'validate_timeout_seconds' | 'prepull_singbox_image'>,
+    config: Pick<AppConfig, 'singbox_image' | 'singbox_version' | 'validate_timeout_seconds' | 'prepull_singbox_image'>,
     private log: Logger = consoleLogger,
   ) {
-    this.image = config.singbox_image || 'ghcr.io/sagernet/sing-box:latest';
+    this.image = deriveSingboxImage(config.singbox_version, config.singbox_image || DEFAULT_SINGBOX_IMAGE);
     this.timeout = (config.validate_timeout_seconds || 30) * 1000;
     this.prepull = config.prepull_singbox_image ?? true;
   }

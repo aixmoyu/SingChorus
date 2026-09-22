@@ -21,6 +21,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   cloud_url: 'http://localhost:8787',
   cloud_token: '',
   singbox_image: 'ghcr.io/sagernet/sing-box:latest',
+  singbox_version: '',
   validate_timeout_seconds: 30,
   prepull_singbox_image: true,
   node_name: '',

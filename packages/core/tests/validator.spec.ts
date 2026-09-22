@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 
 // mock child_process.execFile：按 handler 路由 docker 子命令，避免真实 docker 依赖。
 const execFileMock = vi.fn();
@@ -29,6 +29,48 @@ async function makeValidator(over: Record<string, unknown> = {}) {
   } as any);
 }
 const countSub = (name: string) => execFileMock.mock.calls.filter(([, args]) => args[0] === name).length;
+
+describe('deriveSingboxImage（§4.1 镜像推导）', () => {
+  let deriveSingboxImage: (version: string | undefined, baseImage: string) => string;
+  beforeAll(async () => {
+    ({ deriveSingboxImage } = await import('../src/services/validator.js'));
+  });
+
+  it(':latest 替换为 v 前缀版本', () => {
+    expect(deriveSingboxImage('1.12.9', 'ghcr.io/sagernet/sing-box:latest')).toBe('ghcr.io/sagernet/sing-box:v1.12.9');
+  });
+
+  it('registry 带端口：tag 切分只在最后一个 / 之后', () => {
+    expect(deriveSingboxImage('1.12.4', 'registry.example.com:5000/sing-box:latest')).toBe('registry.example.com:5000/sing-box:v1.12.4');
+  });
+
+  it('无 tag 的镜像 → 追加 tag', () => {
+    expect(deriveSingboxImage('1.11.15', 'ghcr.io/sagernet/sing-box')).toBe('ghcr.io/sagernet/sing-box:v1.11.15');
+  });
+
+  it('版本未设置/空白 → 原样返回 baseImage（高级用户整体自定义镜像）', () => {
+    expect(deriveSingboxImage('', 'my-registry/sb:custom')).toBe('my-registry/sb:custom');
+    expect(deriveSingboxImage(undefined, 'my-registry/sb:custom')).toBe('my-registry/sb:custom');
+    expect(deriveSingboxImage('  ', 'my-registry/sb:custom')).toBe('my-registry/sb:custom');
+  });
+
+  it('baseImage 为空 → 回退默认镜像并 pin', () => {
+    expect(deriveSingboxImage('1.12.9', '')).toBe('ghcr.io/sagernet/sing-box:v1.12.9');
+  });
+
+  it('校验器构造：singbox_version 驱动 docker 镜像', async () => {
+    handler = (_c, args, cb) => {
+      if (args[0] === 'info') return setImmediate(() => cb(null, '', ''));
+      if (args[0] === 'pull') return setImmediate(() => cb(null, '', ''));
+      if (args[0] === 'run') return setImmediate(() => cb(null, '', ''));
+      return setImmediate(() => cb(null, '', ''));
+    };
+    const v = await makeValidator({ singbox_version: '1.12.9', singbox_image: 'ghcr.io/sagernet/sing-box:latest' });
+    await v.validate({ a: 1 });
+    const runCall = execFileMock.mock.calls.find(([, args]) => args[0] === 'run');
+    expect(runCall?.[1]).toContain('ghcr.io/sagernet/sing-box:v1.12.9');
+  });
+});
 
 describe('SingboxValidator（core-P1）', () => {
   it('docker 不可用 → 跳过校验（valid:true + 提示），且结果进缓存', async () => {

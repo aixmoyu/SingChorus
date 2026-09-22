@@ -238,41 +238,82 @@ export class CloudClient {
     );
   }
 
-  async getProtocols(noRetry: boolean = false): Promise<any[]> {
-    const resp = await this.request({ method: 'GET', path: '/api/protocols', noRetry });
+  /** 版本过滤 query 参数（singbox_version 已设置时由调用方传入）。 */
+  private versionQuery(version?: string): string {
+    return version ? `?singbox_version=${encodeURIComponent(version)}` : '';
+  }
+
+  async getProtocols(noRetry: boolean = false, version?: string): Promise<any[]> {
+    const resp = await this.request({ method: 'GET', path: `/api/protocols${this.versionQuery(version)}`, noRetry });
     return resp.data?.protocols ?? [];
   }
 
-  async getServerTemplates(): Promise<any[]> {
-    const resp = await this.request({ method: 'GET', path: '/api/templates?category=server' });
-    return resp.data?.templates ?? [];
+  /** 单类别模板获取（含 filtered_count —— 被版本过滤隐藏的数量，UI 提示用）。 */
+  private async fetchCategory(category: string, version?: string): Promise<{ templates: any[]; filtered_count: number }> {
+    const resp = await this.request({ method: 'GET', path: `/api/templates?category=${category}${version ? `&singbox_version=${encodeURIComponent(version)}` : ''}` });
+    return {
+      templates: resp.data?.templates ?? [],
+      filtered_count: Number(resp.data?.filtered_count ?? 0),
+    };
   }
 
-  async getClientTemplates(): Promise<any[]> {
-    const resp = await this.request({ method: 'GET', path: '/api/templates?category=client' });
-    return resp.data?.templates ?? [];
+  /** 协议列表获取（含 filtered_count，与 fetchCategory 对齐）。 */
+  private async fetchProtocolsWithCount(version?: string): Promise<{ templates: any[]; filtered_count: number }> {
+    const resp = await this.request({ method: 'GET', path: `/api/protocols${this.versionQuery(version)}` });
+    return {
+      templates: resp.data?.protocols ?? [],
+      filtered_count: Number(resp.data?.filtered_count ?? 0),
+    };
   }
 
-  async getDockerTemplates(): Promise<any[]> {
-    const resp = await this.request({ method: 'GET', path: '/api/templates?category=docker' });
-    return resp.data?.templates ?? [];
+  async getServerTemplates(version?: string): Promise<any[]> {
+    return (await this.fetchCategory('server', version)).templates;
   }
 
-  async getTemplates(role?: string): Promise<any[]> {
+  async getClientTemplates(version?: string): Promise<any[]> {
+    return (await this.fetchCategory('client', version)).templates;
+  }
+
+  async getDockerTemplates(version?: string): Promise<any[]> {
+    return (await this.fetchCategory('docker', version)).templates;
+  }
+
+  /** 同 getTemplates，但保留 filtered_count（panel 模板列表路由用）。 */
+  async getTemplatesWithCount(role?: string, version?: string): Promise<{ templates: any[]; filtered_count: number }> {
+    if (role === 'protocol') {
+      return await this.fetchProtocolsWithCount(version);
+    }
+    if (role === 'server' || role === 'client' || role === 'docker') {
+      return await this.fetchCategory(role, version);
+    }
+    // 聚合模式：filtered_count 为四类之和。
+    const [p, s, c, d] = await Promise.all([
+      this.fetchProtocolsWithCount(version),
+      this.fetchCategory('server', version),
+      this.fetchCategory('client', version),
+      this.fetchCategory('docker', version),
+    ]);
+    return {
+      templates: [...p.templates, ...s.templates, ...c.templates, ...d.templates],
+      filtered_count: p.filtered_count + s.filtered_count + c.filtered_count + d.filtered_count,
+    };
+  }
+
+  async getTemplates(role?: string, version?: string): Promise<any[]> {
     if (role) {
       const dispatch: Record<string, () => Promise<any[]>> = {
-        protocol: () => this.getProtocols(),
-        server: () => this.getServerTemplates(),
-        client: () => this.getClientTemplates(),
-        docker: () => this.getDockerTemplates(),
+        protocol: () => this.getProtocols(false, version),
+        server: () => this.getServerTemplates(version),
+        client: () => this.getClientTemplates(version),
+        docker: () => this.getDockerTemplates(version),
       };
       return dispatch[role]?.() ?? [];
     }
     const [p, s, c, d] = await Promise.all([
-      this.getProtocols(),
-      this.getServerTemplates(),
-      this.getClientTemplates(),
-      this.getDockerTemplates(),
+      this.getProtocols(false, version),
+      this.getServerTemplates(version),
+      this.getClientTemplates(version),
+      this.getDockerTemplates(version),
     ]);
     return [...p, ...s, ...c, ...d];
   }
@@ -306,12 +347,14 @@ export class CloudClient {
    * source of truth as subscriptions — no local assembly.
    */
   async renderDeploy(
-    instances: Array<{ id: string; serverConfig: Record<string, unknown>; clientConfig?: Record<string, unknown> }>,
-    options: { serverOverallId?: string; dockerOverallId?: string } = {},
+    instances: Array<{ id: string; protocolId?: string; serverConfig: Record<string, unknown>; clientConfig?: Record<string, unknown> }>,
+    options: { serverOverallId?: string; dockerOverallId?: string; singboxVersion?: string } = {},
   ): Promise<{
     serverConfig: Record<string, unknown>;
     composeYaml: string;
     entrySh: string;
+    singboxVersion?: string;
+    singboxImage?: string;
   }> {
     const resp = await this.request({
       method: 'POST',
@@ -330,6 +373,9 @@ export class CloudClient {
       serverConfig: resp.data.serverConfig ?? {},
       composeYaml: resp.data.composeYaml ?? '',
       entrySh: resp.data.entrySh ?? '',
+      // 旧 cloud 响应没有这两个字段 → undefined，调用方按缺省处理。
+      singboxVersion: resp.data.singboxVersion,
+      singboxImage: resp.data.singboxImage,
     };
   }
 
@@ -414,7 +460,7 @@ export class CloudClient {
   }
 
   /** Register/heartbeat this node with the cloud (creates or updates the node row). */
-  async registerNode(data: { fingerprint: string; name: string; address?: string }): Promise<void> {
+  async registerNode(data: { fingerprint: string; name: string; address?: string; singboxVersion?: string }): Promise<void> {
     const resp = await this.request({
       method: 'POST',
       path: '/api/nodes/register',

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   server_overall_id TEXT DEFAULT NULL,
   docker_overall_id TEXT DEFAULT NULL,
   server_params TEXT DEFAULT '{}',
+  singbox_version TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS templates (
   entry_script TEXT,
   params TEXT NOT NULL DEFAULT '[]',
   description TEXT,
+  singbox_compat TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

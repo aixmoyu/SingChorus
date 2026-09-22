@@ -11,20 +11,27 @@ router.use(requireAuth)
 
 router.get('/', (_req, res) => {
   const cfg = loadConfig()
+  // singbox_version 存在 core store（与 ctl 共享同一份数据目录），不走 panel config。
+  const app = getCore().getAppConfig()
   res.json({
     core_url: cfg.core_url,
     core_token: cfg.core_token,
     node_name: cfg.node_name,
     node_address: cfg.node_address,
+    singbox_version: app.singbox_version || '',
     effective_cloud_url: resolveCloudUrl(),
   })
 })
+
+/** 与 cloud 端 SINGBOX_VERSION_RE 一致；'' = 未设置（跟随模板默认）。 */
+const SINGBOX_VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
 const settingsSchema = z.object({
   core_url: z.string().optional(),
   core_token: z.string().optional(),
   node_name: z.string().min(1).max(128).optional(),
   node_address: z.string().max(255).optional(),
+  singbox_version: z.union([z.literal(''), z.string().regex(SINGBOX_VERSION_RE)]).optional(),
 })
 
 router.post('/', (req, res) => {
@@ -49,6 +56,12 @@ router.post('/', (req, res) => {
     node_name: cfg.node_name,
     node_address: cfg.node_address,
   })
+  // singbox_version 只在显式携带时写入 core store；随后必须失效缓存，
+  // 让 getCore() 依据新版本快照重建实例（校验器镜像随版本 pin）。
+  if (parsed.data.singbox_version !== undefined) {
+    core.updateAppConfig({ singbox_version: parsed.data.singbox_version })
+    invalidateCore()
+  }
   ensureSyncTimer()
   triggerSync()
   req.log.info({ fields: Object.keys(updates), cloudUrl: updates.core_url }, 'panel settings updated')

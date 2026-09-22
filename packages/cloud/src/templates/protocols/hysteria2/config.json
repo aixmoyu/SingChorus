@@ -2,6 +2,7 @@
   "$schema": "../config.schema.json",
   "name": "Hysteria2",
   "version": "1.0.0",
+  "singbox_compat": ">=1.14.0 <1.16.0",
   "params": [
     { "name": "domain", "type": "string", "required": true, "description": "Server address" },
     { "name": "port", "type": "number", "description": "Listen port (auto-generated high port)", "generator": "random_port_high:30000" },

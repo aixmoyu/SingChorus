@@ -28,6 +28,28 @@
       </n-form>
     </n-card>
 
+    <n-card title="sing-box">
+      <n-form :label-placement="labelPlacement" label-width="140">
+        <n-form-item label="Version">
+          <n-select
+            v-model:value="singboxVersionValue"
+            :options="versionOptions"
+            :loading="templateStore.loading"
+            filterable
+            tag
+            clearable
+            placeholder="Follow docker template default"
+          />
+          <template #feedback>
+            Pin the sing-box version for this node. Templates incompatible with the pinned version are hidden; the docker image is pinned to v{{ singboxVersionValue || '(default)' }} on the next deploy.
+          </template>
+        </n-form-item>
+        <div class="form-actions">
+          <n-button type="primary" @click="saveSingbox" :loading="savingSingbox">Save Version</n-button>
+        </div>
+      </n-form>
+    </n-card>
+
     <n-card title="Cloud Settings">
       <n-form :model="form" :label-placement="labelPlacement" label-width="140">
         <n-form-item label="Cloud URL">
@@ -50,15 +72,17 @@
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from 'vue'
-import { NCard, NDescriptions, NDescriptionsItem, NSpin, NForm, NFormItem, NInput, NButton, NAlert, useMessage } from 'naive-ui'
+import { NCard, NDescriptions, NDescriptionsItem, NSpin, NForm, NFormItem, NInput, NButton, NAlert, NSelect, useMessage } from 'naive-ui'
 import { useInfoStore } from '@/stores/info'
 import { useSettingsStore } from '@/stores/settings'
+import { useTemplateStore } from '@/stores/template'
 import CloudUrlInput from '@/components/CloudUrlInput.vue'
 import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
 
 const infoStore = useInfoStore()
 const settings = useSettingsStore()
+const templateStore = useTemplateStore()
 const message = useMessage()
 const { labelPlacement } = useFormLabelPlacement()
 
@@ -70,6 +94,36 @@ const testing = ref(false)
 const savingNode = ref(false)
 const savingCloud = ref(false)
 const testResult = ref<boolean | null>(null)
+
+// --- sing-box version pin ---
+const singboxVersionValue = ref<string | null>(null)
+const savingSingbox = ref(false)
+
+/** 版本下拉候选：来自 cloud docker 模板的 singbox_version param enum。 */
+const versionOptions = computed(() => {
+  const dockerTpl = templateStore.templates.find((t) => t.role === 'docker')
+  const param = dockerTpl?.schema?.params?.find((p) => p.name === 'singbox_version')
+  const values = (param?.enum as string[] | undefined) ?? []
+  return values.map((v) => ({ label: v, value: v }))
+})
+
+/** Persist the sing-box version pin only. Returns false (and shows the error) on failure. */
+async function saveSingbox(): Promise<boolean> {
+  const version = singboxVersionValue.value || ''
+  if (version && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
+    message.error('Invalid version format — use X.Y.Z (optional -prerelease).')
+    return false
+  }
+  savingSingbox.value = true
+  try {
+    await settings.saveSettings(undefined, undefined, undefined, undefined, version)
+    message.success('sing-box version saved — takes effect on the next deploy')
+    return true
+  } catch (e: unknown) {
+    message.error(extractApiError(e, 'Save failed').message)
+    return false
+  } finally { savingSingbox.value = false }
+}
 
 /** Probe the candidate cloud values in the form without persisting them. */
 async function testConnection() {
@@ -120,6 +174,9 @@ onMounted(async () => {
   form.coreToken = settings.coreToken
   nodeForm.nodeName = settings.nodeName
   nodeForm.nodeAddress = settings.nodeAddress
+  singboxVersionValue.value = settings.singboxVersion || null
   infoStore.fetchSystemInfo().catch(() => { /* system info is best-effort */ })
+  // 版本下拉候选来自 docker 模板 param enum；未配置 cloud 时保持为空。
+  templateStore.fetchTemplates('docker').catch(() => { /* selector stays empty */ })
 })
 </script>

@@ -3,6 +3,13 @@ import { ref } from 'vue'
 import http from '@/lib/http'
 import type { DeployStatus } from '@/lib/types'
 
+/** 上次成功部署的元信息（core 写入 docker 目录的 deploy-meta.json）。 */
+export interface DeployMeta {
+  singboxVersion?: string
+  singboxImage?: string
+  deployedAt?: string
+}
+
 /**
  * Store for deploy lifecycle (deploy / stop / restart) and container logs.
  * Polling is intentionally kept in the view layer (`Deploy.vue`) so that the
@@ -12,10 +19,17 @@ export const useDeployStore = defineStore('deploy', () => {
   const deployStatus = ref<DeployStatus | null>(null)
   const logs = ref<string[]>([])
   const loading = ref(false)
+  /** 上次成功部署的元信息；null = 旧部署无记录（unknown）。 */
+  const deployMeta = ref<DeployMeta | null>(null)
 
   async function fetchDeployStatus(): Promise<void> {
     const res = await http.get('/core/deploy/status')
     deployStatus.value = res.data
+  }
+
+  async function fetchDeployMeta(): Promise<void> {
+    const res = await http.get('/core/deploy/meta')
+    deployMeta.value = res.data.meta ?? null
   }
 
   async function deploy(params: { serverOverallId?: string } = {}): Promise<void> {
@@ -46,7 +60,9 @@ export const useDeployStore = defineStore('deploy', () => {
     deployStatus,
     logs,
     loading,
+    deployMeta,
     fetchDeployStatus,
+    fetchDeployMeta,
     deploy,
     stopDeploy,
     restartDeploy,

@@ -34,6 +34,7 @@
     "hono": "^4.7.0",
     "@hono/zod-validator": "^0.4.0",
     "zod": "^3.24.0",
+    "semver": "^7.6.0",
     "@noble/curves": "^1.8.1",
     "@hono/node-server": "^1.14.0",
     "better-sqlite3": "^12.4.1"
@@ -45,6 +46,7 @@
     "vitest": "~3.2.0",
     "wrangler": "^4.28.0",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/semver": "^7.5.8",
     "esbuild": "^0.25.5",
     "tsx": "^4.19.1"
   }

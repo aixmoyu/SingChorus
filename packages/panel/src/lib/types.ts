@@ -30,6 +30,8 @@ export interface TemplateInfo {
   name: string
   version: string
   role: string
+  /** 模板声明的 sing-box 兼容范围（如 ">=1.12.0"）；undefined = 兼容任意版本。 */
+  singbox_compat?: string
   schema: TemplateSchema
   created_at: string
   updated_at: string

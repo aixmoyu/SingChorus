@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
+import { isValidSingboxVersion } from '../engine/compat';
 
 const createNodeSchema = z.object({
   name: z.string().min(1).max(128),
@@ -15,6 +16,8 @@ const registerNodeSchema = z.object({
   fingerprint: z.string().min(8).max(128),
   name: z.string().min(1).max(128),
   address: z.string().optional(),
+  // 心跳顺路上报的本机 sing-box 版本（可选；空串 = 未设置/清除）。
+  singboxVersion: z.string().max(32).optional(),
 });
 
 const rebindNodeSchema = z.object({
@@ -39,27 +42,38 @@ const nodes = new Hono<{ Bindings: Env }>();
  * name/address and refreshes last_seen.
  */
 nodes.post('/register', adminAuth, zValidator('json', registerNodeSchema), async (c) => {
-  const { fingerprint, name, address } = c.req.valid('json');
+  const { fingerprint, name, address, singboxVersion } = c.req.valid('json');
+  if (singboxVersion !== undefined && singboxVersion !== '' && !isValidSingboxVersion(singboxVersion)) {
+    return c.json({ error: { code: 'SBX_BAD_VERSION', message: `Invalid sing-box version: '${singboxVersion}'` } }, 400);
+  }
   const now = new Date().toISOString();
 
   // Two-statement heartbeat instead of the old SELECT→UPDATE→SELECT (or
   // SELECT→INSERT→SELECT) round-trips. INSERT OR IGNORE only returns a row on
   // a genuine insert, which also distinguishes 201 from 200 cleanly.
   const inserted = await c.env.DB.prepare(
-    `INSERT INTO nodes (id, name, fingerprint, address, last_seen, status)
-     VALUES (?, ?, ?, ?, ?, 'online')
+    `INSERT INTO nodes (id, name, fingerprint, address, last_seen, status, singbox_version)
+     VALUES (?, ?, ?, ?, ?, 'online', ?)
      ON CONFLICT(fingerprint) WHERE fingerprint IS NOT NULL DO NOTHING
      RETURNING *`
-  ).bind(crypto.randomUUID(), name, fingerprint, address || null, now).first<Record<string, unknown>>();
+  ).bind(crypto.randomUUID(), name, fingerprint, address || null, now, singboxVersion || null).first<Record<string, unknown>>();
 
   if (inserted) {
     return c.json({ node: inserted }, 201);
   }
 
-  const updated = await c.env.DB.prepare(
-    `UPDATE nodes SET name = ?, address = COALESCE(?, address), last_seen = ?, status = 'online'
-     WHERE fingerprint = ? RETURNING *`
-  ).bind(name, address || null, now, fingerprint).first<Record<string, unknown>>();
+  // 版本字段仅在调用方显式携带时更新（旧 panel/ctl 不传 → 保留既有值；
+  // 显式空串 → 清除）。
+  const updated = singboxVersion !== undefined
+    ? await c.env.DB.prepare(
+        `UPDATE nodes SET name = ?, address = COALESCE(?, address), last_seen = ?, status = 'online',
+         singbox_version = ?
+         WHERE fingerprint = ? RETURNING *`
+      ).bind(name, address || null, now, singboxVersion || null, fingerprint).first<Record<string, unknown>>()
+    : await c.env.DB.prepare(
+        `UPDATE nodes SET name = ?, address = COALESCE(?, address), last_seen = ?, status = 'online'
+         WHERE fingerprint = ? RETURNING *`
+      ).bind(name, address || null, now, fingerprint).first<Record<string, unknown>>();
   return c.json({ node: updated });
 });
 

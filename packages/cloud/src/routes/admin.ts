@@ -20,7 +20,8 @@ const hy2Cfg = hy2ConfigJson as ProtocolConfigFile;
 const vlessCfg = vlessConfigJson as ProtocolConfigFile;
 const serverCfg = defaultServerConfig as OverallConfigFile;
 const clientCfg = defaultClientConfig as OverallConfigFile;
-const dockerCfg = defaultDockerConfig as OverallConfigFile;
+// select param 的字面量推导类型与 zod 联合类型不重叠，先经 unknown 中转
+const dockerCfg = defaultDockerConfig as unknown as OverallConfigFile;
 
 const admin = new Hono<{ Bindings: Env }>();
 

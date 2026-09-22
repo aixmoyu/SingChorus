@@ -38,8 +38,10 @@ router.get('/cloud/templates', async (req, res) => {
   const core = getCore()
   try {
     const role = req.query.role as string | undefined
-    const templates = await core.cloud.getTemplates(role)
-    res.json({ templates })
+    // 节点版本注入（§5.2）：cloud 按模板 singbox_compat 过滤，前端零感知。
+    const version = core.getAppConfig().singbox_version || undefined
+    const { templates, filtered_count } = await core.cloud.getTemplatesWithCount(role, version)
+    res.json({ templates, filtered_count })
   } catch (err) {
     const e = toCoreError(err)
     res.status(503).json(toErrorEnvelope(e.code || 'CLOUD_UNREACHABLE', e.message))

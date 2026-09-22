@@ -2,6 +2,7 @@
   "$schema": "../config.schema.json",
   "name": "VLESS Reality Vision",
   "version": "1.0.0",
+  "singbox_compat": ">=1.14.0 <1.16.0",
   "params": [
     { "name": "domain", "type": "string", "required": true, "description": "Server address" },
     { "name": "port", "type": "number", "default": 443, "description": "Listen port" },

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidCompatRange } from './compat';
 
 export const ParamDefSchema = z.object({
   name: z.string().min(1, 'Param name must not be empty'),
@@ -28,9 +29,22 @@ export const ParamDefSchema = z.object({
 
 export type ParamDef = z.infer<typeof ParamDefSchema>;
 
+// singbox_compat：模板兼容的 sing-box 版本范围（可选；格式非法时在模板写路径
+// 返回 SBX_BAD_RANGE，这里只做声明层格式校验）。
+const SingboxCompatSchema = z.string().superRefine((val, ctx) => {
+  if (!isValidCompatRange(val)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['singbox_compat'],
+      message: `Invalid sing-box compat range: '${val}'`,
+    });
+  }
+});
+
 export const ProtocolConfigFileSchema = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
+  singbox_compat: SingboxCompatSchema.optional(),
   params: z.array(ParamDefSchema),
   description: z.string().optional(),
 });
@@ -40,6 +54,7 @@ export type ProtocolConfigFile = z.infer<typeof ProtocolConfigFileSchema>;
 export const OverallConfigFileSchema = z.object({
   name: z.string().optional(),
   version: z.string().optional(),
+  singbox_compat: SingboxCompatSchema.optional(),
   params: z.array(ParamDefSchema),
   description: z.string().optional(),
 });
@@ -66,6 +81,7 @@ export const TemplateSchema = z.object({
   entryScript: z.string().optional(),
   params: z.string(),
   description: z.string().optional(),
+  singboxCompat: z.string().nullish().transform((v) => v ?? undefined),
 });
 
 export type Template = z.infer<typeof TemplateSchema>;
@@ -106,6 +122,7 @@ export interface TemplateRow {
   entry_script: string | null;
   params: string;
   description: string | null;
+  singbox_compat: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -173,6 +190,7 @@ export function parseTemplateRow(row: TemplateRow): Template {
     entryScript: row.entry_script ?? undefined,
     params: row.params,
     description: row.description ?? undefined,
+    singboxCompat: row.singbox_compat ?? undefined,
   });
 }
 

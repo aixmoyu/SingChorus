@@ -18,7 +18,8 @@ const hy2Config = hysteria2Config as ProtocolConfigFile;
 const vlessCfg = vlessConfig as ProtocolConfigFile;
 const serverCfg = serverConfig as OverallConfigFile;
 const clientCfg = clientConfig as OverallConfigFile;
-const dockerCfg = dockerConfig as OverallConfigFile;
+// select param 的字面量推导类型与 zod 联合类型不重叠，先经 unknown 中转
+const dockerCfg = dockerConfig as unknown as OverallConfigFile;
 
 interface TemplateSeed {
   id: string;
@@ -32,6 +33,7 @@ interface TemplateSeed {
   entry_script: string | null;
   params: string;
   description: string | null;
+  singbox_compat: string | null;
 }
 
 const templateSeeds: TemplateSeed[] = [
@@ -48,6 +50,8 @@ const templateSeeds: TemplateSeed[] = [
     entry_script: null,
     params: JSON.stringify(hy2Config.params),
     description: hy2Config.description ?? null,
+    // certificate_provider (ACME) was introduced in sing-box 1.12
+    singbox_compat: hy2Config.singbox_compat ?? null,
   },
   {
     id: 'vless-reality-vision',
@@ -61,6 +65,8 @@ const templateSeeds: TemplateSeed[] = [
     entry_script: null,
     params: JSON.stringify(vlessCfg.params),
     description: vlessCfg.description ?? null,
+    // xtls-rprx-vision flow requires sing-box >= 1.8
+    singbox_compat: vlessCfg.singbox_compat ?? null,
   },
   // Overall templates
   {
@@ -75,6 +81,8 @@ const templateSeeds: TemplateSeed[] = [
     entry_script: null,
     params: '[]',
     description: serverCfg.description ?? 'Default server overall template',
+    // http_clients / default_domain_resolver / new DNS format are 1.12+ syntax
+    singbox_compat: serverCfg.singbox_compat ?? null,
   },
   {
     id: 'client-default',
@@ -88,6 +96,7 @@ const templateSeeds: TemplateSeed[] = [
     entry_script: null,
     params: '[]',
     description: clientCfg.description ?? 'Default client overall template',
+    singbox_compat: clientCfg.singbox_compat ?? null,
   },
   {
     id: 'docker-default',
@@ -100,8 +109,10 @@ const templateSeeds: TemplateSeed[] = [
     config: JSON.stringify(dockerConfig),
     // Matches the panel-side entry script: verify, format, then run.
     entry_script: '#!/bin/sh\nset -e\nconfigFilePath="/data/config.json"\necho "entry"\nsing-box version\necho -e "\\nconfig:"\nsing-box check -c $configFilePath || cat $configFilePath\necho -e "\\nstarting"\nsing-box run -c $configFilePath\n',
-    params: '[]',
+    params: JSON.stringify(dockerCfg.params),
     description: dockerCfg.description ?? 'Default docker-compose template',
+    // entry.sh only uses basic subcommands — keep the range wide
+    singbox_compat: dockerCfg.singbox_compat ?? null,
   },
 ];
 
@@ -114,13 +125,14 @@ export async function refreshSeedTemplates(db: D1Database): Promise<void> {
   for (const t of templateSeeds) {
     await db.prepare(
       `UPDATE templates SET category = ?, name = ?, version = ?, server_template = ?, client_template = ?,
-       template_content = ?, config = ?, entry_script = ?, params = ?, description = ?, updated_at = datetime('now')
+       template_content = ?, config = ?, entry_script = ?, params = ?, description = ?, singbox_compat = ?,
+       updated_at = datetime('now')
        WHERE id = ?`,
     ).bind(
       t.category, t.name, t.version,
       t.server_template, t.client_template,
       t.template_content, t.config, t.entry_script,
-      t.params, t.description, t.id,
+      t.params, t.description, t.singbox_compat, t.id,
     ).run();
   }
 }
@@ -141,13 +153,13 @@ export async function seedIfEmpty(db: D1Database): Promise<void> {
 
   for (const t of templateSeeds) {
     await db.prepare(
-      `INSERT INTO templates (id, category, name, version, server_template, client_template, template_content, config, entry_script, params, description)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO templates (id, category, name, version, server_template, client_template, template_content, config, entry_script, params, description, singbox_compat)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
       t.id, t.category, t.name, t.version,
       t.server_template, t.client_template,
       t.template_content, t.config, t.entry_script,
-      t.params, t.description,
+      t.params, t.description, t.singbox_compat,
     ).run();
   }
 

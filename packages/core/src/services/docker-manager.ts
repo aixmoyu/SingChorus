@@ -1,5 +1,5 @@
 import { execFile } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, copyFileSync, renameSync, unlinkSync, readdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, renameSync, unlinkSync, readdirSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { randomUUID } from 'crypto';
 import { LockTimeoutError, withFileLockSync } from './lock.js';
@@ -25,6 +25,13 @@ export class DeployInProgressError extends DockerError {
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/** 上次成功部署的元信息（写入 docker 目录的 deploy-meta.json）。 */
+export interface DeployMeta {
+  singboxVersion?: string
+  singboxImage?: string
+  deployedAt?: string
+}
 
 function execFileAsync(cmd: string, args: string[], opts: { timeout?: number } = {}): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -235,22 +242,27 @@ export class DockerManager {
   /**
    * Deploy with cloud-rendered artifacts. All three inputs are required —
    * the caller (core.deploy) obtains them from POST /api/render/deploy.
+   * `meta` (optional) is persisted alongside the artifacts once the health
+   * check passes, so the effective version/image of the last successful
+   * deploy stays readable even when the container is stopped.
    */
   async deployRendered(
     serverConfig: Record<string, unknown>,
     composeYaml: string,
     entrySh: string,
+    meta?: DeployMeta,
   ) {
     if (!composeYaml?.trim()) throw new DockerError('Cloud returned an empty compose yaml');
     if (!entrySh?.trim()) throw new DockerError('Cloud returned an empty entry script');
 
-    return this.withDeploying(() => this.withDeployLock(() => this.deployRenderedLocked(serverConfig, composeYaml, entrySh)));
+    return this.withDeploying(() => this.withDeployLock(() => this.deployRenderedLocked(serverConfig, composeYaml, entrySh, meta)));
   }
 
   private async deployRenderedLocked(
     serverConfig: Record<string, unknown>,
     composeYaml: string,
     entrySh: string,
+    meta?: DeployMeta,
   ) {
     const startedAt = Date.now();
     const bak = this.backupConfig();
@@ -272,6 +284,12 @@ export class DockerManager {
         throw new DockerError(`Container failed to become healthy within ${HEALTH_CHECK_TIMEOUT}s`);
       }
       this.log.info('docker: deploy succeeded', { durationMs: Date.now() - startedAt });
+      // 健康检查通过后才落盘元信息：回滚路径上不会留下"看似成功"的记录。
+      if (meta) {
+        try {
+          atomicWrite(join(this.dockerDir, 'deploy-meta.json'), JSON.stringify(meta, null, 2));
+        } catch { /* 元信息写失败不影响部署结果 */ }
+      }
     } catch (err) {
       if (err instanceof DockerError) throw err;
       this.restoreConfig(bak);
@@ -280,6 +298,20 @@ export class DockerManager {
         error: (err as any).stderr || ((err instanceof Error) ? err.message : String(err)),
       });
       throw new DockerError(`Deploy failed: ${(err as any).stderr || (err as any).message || 'unknown'}`);
+    }
+  }
+
+  /**
+   * Read the metadata of the last successful deploy. Returns null when the
+   * file is missing (pre-feature deploy) or unreadable — callers show "unknown".
+   */
+  getDeployMeta(): DeployMeta | null {
+    try {
+      const raw = readFileSync(join(this.dockerDir, 'deploy-meta.json'), 'utf-8');
+      const parsed = JSON.parse(raw) as DeployMeta;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
     }
   }
 
