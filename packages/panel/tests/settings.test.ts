@@ -6,9 +6,12 @@ import { makeTempHome, loadApp, setupAdmin } from './helpers.js'
 describe('settings: save + invalidate chain', () => {
   let app: Application
   let cookie: string
+  let DEFAULT_CLOUD_URL: string
 
   beforeAll(async () => {
     process.env.HOME = await makeTempHome()
+    // server 模块必须在 HOME 隔离后动态导入（见 loadApp 的约定）
+    ;({ DEFAULT_CLOUD_URL } = await import('../server/core-provider.js'))
     app = await loadApp()
     cookie = await setupAdmin(app)
   })
@@ -17,7 +20,7 @@ describe('settings: save + invalidate chain', () => {
     const res = await request(app).get('/api/settings').set('Cookie', cookie)
     expect(res.status).toBe(200)
     expect(res.body.core_url).toBe('')
-    expect(res.body.effective_cloud_url).toBe('http://localhost:8787')
+    expect(res.body.effective_cloud_url).toBe(DEFAULT_CLOUD_URL)
   })
 
   it('persists trimmed settings and resolves the new effective URL', async () => {

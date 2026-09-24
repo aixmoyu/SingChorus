@@ -1,40 +1,25 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { initTestHome, makeEntry, type TestHome } from './helpers';
 
 // store.ts 在 import 时根据 HOME 计算数据目录，因此先改 HOME 再动态导入。
-const base = join(tmpdir(), `singchorus-test-${process.pid}-${Date.now()}`);
-const DATA_DIR = join(base, '.singchorus', 'data');
-const CONFIGS_DIR = join(DATA_DIR, 'configs');
-const ENABLED_DIR = join(CONFIGS_DIR, 'enabled');
-const DISABLED_DIR = join(CONFIGS_DIR, 'disabled');
+// 目录布局知识只存在于 initTestHome 一处（与 store.ts 的实现解耦）。
+let home: TestHome;
+let DATA_DIR: string, CONFIGS_DIR: string, ENABLED_DIR: string, DISABLED_DIR: string;
 
 // 动态导入后赋值
 let LocalStore: any;
+let DEFAULT_APP_CONFIG: any;
 
 beforeAll(async () => {
-  process.env.HOME = base;
-  ({ LocalStore } = await import('../src/services/store.js'));
+  home = await initTestHome();
+  DATA_DIR = home.dataDir;
+  CONFIGS_DIR = home.configsDir;
+  ENABLED_DIR = home.enabledDir;
+  DISABLED_DIR = home.disabledDir;
+  ({ LocalStore, DEFAULT_APP_CONFIG } = await import('../src/services/store.js'));
 });
-
-function makeEntry(name: string, overrides: Record<string, unknown> = {}) {
-  return {
-    name,
-    node: 'default',
-    type: 'simple',
-    enabled: true,
-    deployed: false,
-    synced: false,
-    content_hash: 'h-' + name,
-    server_config: {},
-    client_config: {},
-    params: {},
-    created_at: '2026-01-01T00:00:00.000Z',
-    updated_at: '2026-01-01T00:00:00.000Z',
-    ...overrides,
-  };
-}
 
 function quarantinedFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -83,7 +68,7 @@ describe('LocalStore availability self-heal (core-A1)', () => {
     writeFileSync(join(DATA_DIR, 'app_config.json'), '{{{', 'utf-8');
 
     const cfg = new LocalStore().loadAppConfig();
-    expect(cfg.cloud_url).toBe('http://localhost:8787');
+    expect(cfg.cloud_url).toBe(DEFAULT_APP_CONFIG.cloud_url);
     expect(quarantinedFiles(DATA_DIR).some((f) => f.startsWith('app_config.json'))).toBe(true);
   });
 });
@@ -101,7 +86,7 @@ describe('LocalStore 数据完整性（core-R2 / core-A1）', () => {
     const cfg = new LocalStore().loadAppConfig();
     expect(cfg.cloud_url).toBe('https://example.com');
     expect(cfg.node_name).toBe('edge');
-    expect(cfg.singbox_image).toBe('ghcr.io/sagernet/sing-box:latest');
+    expect(cfg.singbox_image).toBe(DEFAULT_APP_CONFIG.singbox_image);
   });
 
   it('历史快照数量封顶 20（保留最新）', () => {
@@ -152,5 +137,5 @@ describe('LocalStore 数据完整性（core-R2 / core-A1）', () => {
 });
 
 afterAll(() => {
-  try { rmSync(base, { recursive: true, force: true }) } catch { /* ok */ }
+  home?.cleanup();
 });

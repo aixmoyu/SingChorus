@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
 import { adminHeaders, api, jsonBody, seed } from './helpers';
+import { VERSION_IN_ALL_SEEDS } from './seed-baseline';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
@@ -155,7 +156,7 @@ describe('Templates API', () => {
     const created = await jsonBody(await api('/api/subscriptions', {
       method: 'POST',
       headers: await adminHeaders(),
-      body: JSON.stringify({ name: 'Binder', path: 'binder', singboxVersion: '1.14.1', overallTemplateId: 'client-default' }),
+      body: JSON.stringify({ name: 'Binder', path: 'binder', singboxVersion: VERSION_IN_ALL_SEEDS, overallTemplateId: 'client-default' }),
     }));
 
     const del = await api('/api/templates/client-default', {

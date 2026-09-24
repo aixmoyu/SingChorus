@@ -116,6 +116,10 @@ const templateSeeds: TemplateSeed[] = [
   },
 ];
 
+/** 种子结构摘要（id + category）：测试通过它推导条数/分组，禁止在测试里
+ * 硬编码种子数量（种子集随功能演进，演进时不应需要改测试）。 */
+export const SEED_TEMPLATES = templateSeeds.map(({ id, category }) => ({ id, category }));
+
 /**
  * Upsert the built-in templates (matched by id) so a deployed cloud never
  * serves stale seed templates. Custom templates (any id not in the seed

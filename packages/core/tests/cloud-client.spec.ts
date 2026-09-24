@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { CloudClient } from '../src/services/cloud-client.js';
+import { CloudClient, RETRY_DELAYS } from '../src/services/cloud-client.js';
 import { AppError } from '../src/errors.js';
 
 const fetchMock = vi.fn();
@@ -33,8 +33,8 @@ describe('CloudClient.request (core-D2 / 预算·重试·401 自愈)', () => {
     const client = new CloudClient(); // cloud_token 为空 → 不触发 login
     const pending = client.getProtocols();
 
-    // 重试退避 1s + 4s
-    await vi.advanceTimersByTimeAsync(5_000);
+    // 重试退避：前两次重试的退避之和（退避表见 RETRY_DELAYS）
+    await vi.advanceTimersByTimeAsync(RETRY_DELAYS[0] + RETRY_DELAYS[1]);
     await expect(pending).resolves.toEqual([{ id: 'p1' }]);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -62,8 +62,8 @@ describe('CloudClient.request (core-D2 / 预算·重试·401 自愈)', () => {
     await vi.runAllTimersAsync();
     await assertion;
 
-    // 预算约束：请求数 = 25s 预算内能容纳的尝试次数（≤ RETRY_DELAYS.length）
-    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(4);
+    // 预算约束：请求数 ≤ 退避表长度（表本身就是预算内的尝试计划）
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(RETRY_DELAYS.length);
     const err = await pending.catch((e) => e);
     expect(err).toBeInstanceOf(AppError);
   });
@@ -109,9 +109,10 @@ describe('CloudClient API 语义', () => {
 
   it('路径参数做 URL 编码（含斜杠/空格的名称不会撕裂路径）', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { subscription: null }));
-    const client = new CloudClient();
+    // 显式传 baseUrl：本测主题是路径编码，不搭车默认值
+    const client = new CloudClient({ cloud_url: 'http://x.example' });
     await client.getSubscription('a/b c');
-    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8787/api/subscriptions/a%2Fb%20c');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://x.example/api/subscriptions/a%2Fb%20c');
   });
 
   it('204 响应 → data 为 null，不做 JSON 解析', async () => {
@@ -167,11 +168,11 @@ describe('CloudClient API 语义', () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, { accessToken: 'jwt-a', expiresIn: 3600 }))
       .mockResolvedValue(jsonResponse(200, { protocols: [] }));
-    const client = new CloudClient({ cloud_token: 't' });
+    const client = new CloudClient({ cloud_token: 't', cloud_url: 'http://x.example' });
     await client.getProtocols();
     await client.getProtocols();
     await client.getProtocols();
-    const logins = fetchMock.mock.calls.filter(([url]) => url === 'http://localhost:8787/api/auth/login');
+    const logins = fetchMock.mock.calls.filter(([url]) => url === 'http://x.example/api/auth/login');
     expect(logins).toHaveLength(1);
     expect(fetchMock.mock.calls[2][1].headers.Authorization).toBe('Bearer jwt-a');
   });

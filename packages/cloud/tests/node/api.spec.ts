@@ -14,6 +14,7 @@ import { app } from '../../src/index';
 import { ensureDatabaseInitialized, resetDatabaseInitCache } from '../../src/db/schema';
 import { resetSubscriptionCaches } from '../../src/routes/subscriptions';
 import { SqliteD1 } from '../../src/node/d1-sqlite';
+import { VERSION_IN_ALL_SEEDS } from '../seed-baseline';
 
 const AUTH_TOKEN = 'node-test-auth-token';
 const JWT_SECRET = 'node-test-jwt-secret';
@@ -160,7 +161,7 @@ describe('node runtime: API contract over SQLite adapters', () => {
     const created = await api(env, '/api/subscriptions', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ path: 'node-test-sub', singboxVersion: '1.14.1' }),
+      body: JSON.stringify({ path: 'node-test-sub', singboxVersion: VERSION_IN_ALL_SEEDS }),
     });
     expect(created.status).toBe(201);
     const sub = ((await created.json()) as { subscription: { id: string; token: string; path: string } }).subscription;

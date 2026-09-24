@@ -2,7 +2,8 @@ import { SELF, env } from 'cloudflare:test';
 import { beforeEach } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
 import { resetRegistryCache } from '../src/engine/registry';
-import { adminHeaders, api, jsonBody, seed } from './helpers';
+import { DEV_AUTH_TOKEN, adminHeaders, api, jsonBody, seed } from './helpers';
+import { RANGE_EXCLUDING_VERSION_IN_ALL_SEEDS, SINGBOX_CATALOG, VERSION_BELOW_ALL_SEEDS, VERSION_IN_ALL_SEEDS } from './seed-baseline';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
@@ -16,7 +17,7 @@ let cachedJwt: string | null = null;
 
 async function getJwt(): Promise<string> {
   if (cachedJwt) return cachedJwt;
-  const authToken = (env as any).AUTH_TOKEN || 'dev-admin-token-change-in-production';
+  const authToken = (env as any).AUTH_TOKEN || DEV_AUTH_TOKEN;
   const res = await SELF.fetch('http://localhost/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -38,8 +39,8 @@ async function createSub(
 ): Promise<{ status: number; body: any }> {
   const res = await SELF.fetch('http://localhost/api/subscriptions', {
     method: 'POST', headers: await AUTH(),
-    // 默认绑定 1.14.1（种子模板 compat 范围 >=1.14.0 <1.16.0 的中值）
-    body: JSON.stringify({ name, path, singboxVersion: '1.14.1', ...extra }),
+    // 默认绑定「满足全部种子 compat 且在目录内」的版本（动态推导）
+    body: JSON.stringify({ name, path, singboxVersion: VERSION_IN_ALL_SEEDS, ...extra }),
   });
   return { status: res.status, body: await res.json() as any };
 }
@@ -128,7 +129,7 @@ describe('Subscription Management', () => {
     const res = await SELF.fetch('http://localhost/api/subscriptions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'No Auth', path: 'no-auth', singboxVersion: '1.14.1' }),
+      body: JSON.stringify({ name: 'No Auth', path: 'no-auth', singboxVersion: VERSION_IN_ALL_SEEDS }),
     });
     expect(res.status).toBe(401);
   });
@@ -307,12 +308,12 @@ describe('Subscription Version Binding (delivery)', () => {
     // 写路径已预校验（§13.7）——创建时用兼容组合，随后收窄模板 compat，
     // 交付端保留为最终防线（模板在订阅创建后被编辑的场景）。
     const sub = subBody(await createSub('Incompat', 'incompat-delivery', {
-      singboxVersion: '1.14.1',
+      singboxVersion: VERSION_IN_ALL_SEEDS,
       overallTemplateId: 'client-default',
     }));
     const narrow = await SELF.fetch('http://localhost/api/templates/client-default', {
       method: 'PUT', headers: await AUTH(),
-      body: JSON.stringify({ singboxCompat: '>=1.15.0' }),
+      body: JSON.stringify({ singboxCompat: RANGE_EXCLUDING_VERSION_IN_ALL_SEEDS }),
     });
     expect(narrow.status).toBe(200);
     const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
@@ -358,7 +359,7 @@ describe('Subscription Version Binding (delivery)', () => {
     const res = await api('/api/singbox-versions', { headers: await adminHeaders() });
     expect(res.status).toBe(200);
     const body = await jsonBody(res);
-    expect(body.versions).toEqual(['1.14.1']);
+    expect(body.versions).toEqual(SINGBOX_CATALOG);
   });
 });
 
@@ -376,7 +377,7 @@ describe('Subscription Pre-Validation (write path)', () => {
   it('POST 版本与模板 compat 冲突 → 400 SBX_VERSION_INCOMPATIBLE', async () => {
     await seed();
     const { status, body } = await createSub('Pre Conflict', 'pre-conflict', {
-      singboxVersion: '1.12.0', // 种子 client-default 要求 >=1.14.0
+      singboxVersion: VERSION_BELOW_ALL_SEEDS, // 低于种子 client-default 的 compat 下限
       overallTemplateId: 'client-default',
     });
     expect(status).toBe(400);
@@ -386,7 +387,7 @@ describe('Subscription Pre-Validation (write path)', () => {
   it('POST 兼容组合 → 201 正常创建', async () => {
     await seed();
     const { status } = await createSub('Pre OK', 'pre-ok', {
-      singboxVersion: '1.14.1',
+      singboxVersion: VERSION_IN_ALL_SEEDS,
       overallTemplateId: 'client-default',
     });
     expect(status).toBe(201);
@@ -395,12 +396,12 @@ describe('Subscription Pre-Validation (write path)', () => {
   it('PUT 版本变更与已绑定模板冲突 → 400（最终值比对）', async () => {
     await seed();
     const { body: created } = await createSub('Put Conflict', 'put-conflict', {
-      singboxVersion: '1.14.1',
+      singboxVersion: VERSION_IN_ALL_SEEDS,
       overallTemplateId: 'client-default',
     });
     const res = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
       method: 'PUT', headers: await AUTH(),
-      body: JSON.stringify({ singboxVersion: '1.11.0' }),
+      body: JSON.stringify({ singboxVersion: VERSION_BELOW_ALL_SEEDS }),
     });
     expect(res.status).toBe(400);
     expect(((await res.json() as any)).error.code).toBe('SBX_VERSION_INCOMPATIBLE');
@@ -419,7 +420,7 @@ describe('Subscription Pre-Validation (write path)', () => {
 
   it('PUT 改为兼容组合 / 清空模板 → 200', async () => {
     await seed();
-    const { body: created } = await createSub('Put OK', 'put-ok', { singboxVersion: '1.14.1' });
+    const { body: created } = await createSub('Put OK', 'put-ok', { singboxVersion: VERSION_IN_ALL_SEEDS });
     const bind = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
       method: 'PUT', headers: await AUTH(),
       body: JSON.stringify({ overallTemplateId: 'client-default' }),
@@ -428,8 +429,8 @@ describe('Subscription Pre-Validation (write path)', () => {
 
     const unbind = await SELF.fetch(`http://localhost/api/subscriptions/${created.subscription.id}`, {
       method: 'PUT', headers: await AUTH(),
-      body: JSON.stringify({ overallTemplateId: null, singboxVersion: '1.11.0' }),
+      body: JSON.stringify({ overallTemplateId: null, singboxVersion: VERSION_BELOW_ALL_SEEDS }),
     });
-    expect(unbind.status).toBe(200); // 模板清空后版本不再受 client-default 约束
+    expect(unbind.status).toBe(200); // 模板清空后版本不再受 client-default 约束（低于下限也能改）
   });
 });

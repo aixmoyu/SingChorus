@@ -2,6 +2,8 @@ import { SELF, env } from 'cloudflare:test';
 import { beforeEach } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
 import { resetSubscriptionCaches } from '../src/routes/subscriptions';
+import { DEV_AUTH_TOKEN } from './helpers';
+import { SEED_PROTOCOL_IDS, SEED_TEMPLATE_IDS } from './seed-baseline';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
@@ -15,7 +17,7 @@ let cachedJwt: string | null = null;
 
 async function getJwt(): Promise<string> {
   if (cachedJwt) return cachedJwt;
-  const authToken = (env as any).AUTH_TOKEN || 'dev-admin-token-change-in-production';
+  const authToken = (env as any).AUTH_TOKEN || DEV_AUTH_TOKEN;
   const res = await SELF.fetch('http://localhost/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -101,8 +103,8 @@ describe('ChorusCloud Worker', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as any;
       expect(Array.isArray(body.protocols)).toBe(true);
-      // Seed data inserts 2 protocols on first request
-      expect(body.protocols.length).toBeGreaterThanOrEqual(2);
+      // Seed data inserts the protocol templates on first request
+      expect(body.protocols.length).toBeGreaterThanOrEqual(SEED_PROTOCOL_IDS.length);
     });
 
     it('POST /api/protocols creates a protocol definition', async () => {
@@ -390,7 +392,7 @@ describe('ChorusCloud Worker', () => {
       });
       expect(res.status).toBe(200);
       const body = await res.json() as any;
-      expect(body.seeded.length).toBe(5);
+      expect(body.seeded.length).toBe(SEED_TEMPLATE_IDS.length);
     });
 
     it('POST /api/admin/seed is idempotent (run twice)', async () => {

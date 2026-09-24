@@ -36,6 +36,14 @@ const mkRow = (id: string, category: string, template: any) => ({
   updated_at: '2026-01-01',
 });
 
+// 断言一律从 import 的模板源对象推导（钉机制不钉数据）：模板内容随迭代演进，
+// 演进时这些测试应零修改通过。占位符替换约定：'{{ proxy_tags }}' → 实例 tag 列表。
+const T = (t: any) => t as any;
+const withProxyTags = (sel: any, tags: string[]) =>
+  sel.outbounds.flatMap((o: string) => (o.includes('proxy_tags') ? tags : [o]));
+// 模板里裸字符串占位元素（如 "{{ protocols }}"）被 splice 成生成的出站条目
+const splicedEntryCount = (tpl: any) => tpl.outbounds.filter((o: any) => typeof o === 'string').length;
+
 describe('template port verification', () => {
   beforeEach(() => {
     resetRegistryCache(); // shared module cache must not leak across mock DBs
@@ -50,17 +58,18 @@ describe('template port verification', () => {
       { id: 'i2', serverConfig: { type: 'vless', listen: 443 }, clientConfig: {} },
     ];
     const result: any = await reg.renderServerOverall(instances, 'server-default', {});
-    expect(result.log).toEqual({ level: 'info', output: '/data/sing-box.log', timestamp: true });
-    expect(Array.isArray(result.inbounds)).toBe(true);
-    expect(result.inbounds).toHaveLength(2);
-    expect(result.inbounds[0].type).toBe('hysteria2');
-    expect(result.outbounds).toEqual([{ type: 'direct', tag: 'direct' }]);
+    expect(result.log).toEqual(T(serverTemplate).log);
+    // one inbound per instance, in order
+    expect(result.inbounds).toHaveLength(instances.length);
+    expect(result.inbounds[0].type).toBe(instances[0].serverConfig.type);
+    // untouched template sections preserved verbatim
+    expect(result.outbounds).toEqual(T(serverTemplate).outbounds);
     expect(result.route).toBeDefined();
-    expect(result.route.final).toBe('direct');
+    expect(result.route.final).toBe(T(serverTemplate).route.final);
     expect(result.route.auto_detect_interface).toBe(true);
-    expect(result.dns.final).toBe('google');
+    expect(result.dns.final).toBe(T(serverTemplate).dns.final);
     // remote rule-set definitions preserved from the template
-    expect(result.route.rule_set.length).toBeGreaterThan(0);
+    expect(result.route.rule_set).toEqual(T(serverTemplate).route.rule_set);
     // no leftover placeholder tokens
     const json = JSON.stringify(result);
     expect(json).not.toContain('{{');
@@ -75,40 +84,45 @@ describe('template port verification', () => {
       { id: 'i2', serverConfig: {}, clientConfig: { tag: 'proxy-b', type: 'vless', server: '2.2.2.2' } },
     ];
     const result: any = await reg.renderClientOverall(instances, 'client-default', {});
+    const tags = instances.map((i) => i.clientConfig.tag);
 
-    // outbounds: 18 selectors + auto + direct + 2 generated = 22
-    expect(result.outbounds).toHaveLength(22);
+    // outbounds: template static entries + one generated outbound per instance
+    // （模板里的裸占位元素被替换为生成的出站条目）
+    expect(result.outbounds).toHaveLength(
+      T(clientTemplate).outbounds.length - splicedEntryCount(T(clientTemplate)) + instances.length,
+    );
 
-    // proxy selector: ["auto","direct","proxy-a","proxy-b"]
+    // every selector in the template gets the instance tags spliced in
+    const proxyTpl = T(clientTemplate).outbounds.find((o: any) => o.tag === 'proxy');
     const proxySel = result.outbounds.find((o: any) => o.tag === 'proxy');
-    expect(proxySel.outbounds).toEqual(['auto', 'direct', 'proxy-a', 'proxy-b']);
+    expect(proxySel.outbounds).toEqual(withProxyTags(proxyTpl, tags));
 
-    // Adobe selector: ["direct","proxy","proxy-a","proxy-b"]
-    const adobeSel = result.outbounds.find((o: any) => o.tag === '🅰️ Adobe');
-    expect(adobeSel.outbounds).toEqual(['direct', 'proxy', 'proxy-a', 'proxy-b']);
+    // secondary selectors (e.g. grouping selectors) get tags after their template entries
+    const groupTpl = T(clientTemplate).outbounds.find((o: any) => o.type === 'selector' && o.tag !== 'proxy');
+    const groupSel = result.outbounds.find((o: any) => o.tag === groupTpl.tag);
+    expect(groupSel.outbounds).toEqual(withProxyTags(groupTpl, tags));
 
-    // auto urltest: ["proxy-a","proxy-b"]
+    // auto urltest: the instance tags only
     const auto = result.outbounds.find((o: any) => o.tag === 'auto');
     expect(auto.type).toBe('urltest');
-    expect(auto.outbounds).toEqual(['proxy-a', 'proxy-b']);
+    expect(auto.outbounds).toEqual(tags);
 
-    // last two are the generated outbounds
-    expect(result.outbounds[20].tag).toBe('proxy-a');
-    expect(result.outbounds[21].tag).toBe('proxy-b');
+    // generated outbounds are appended last, in instance order
+    expect(result.outbounds.at(-1).tag).toBe(tags[tags.length - 1]);
+    expect(result.outbounds.at(-2).tag).toBe(tags[tags.length - 2]);
 
-    // tun inbound preserved
+    // tun inbound preserved verbatim from the template
     const tun = result.inbounds.find((o: any) => o.type === 'tun');
-    expect(tun.interface_name).toBe('tun0');
-    expect(tun.mtu).toBe(9000);
+    expect(tun).toEqual(T(clientTemplate).inbounds.find((i: any) => i.type === 'tun'));
 
-    // dns + route preserved
-    expect(result.dns.final).toBe('dns-local');
-    expect(result.route.final).toBe('proxy');
-    expect(result.route.default_domain_resolver).toBe('dns-local');
+    // dns + route preserved verbatim from the template
+    expect(result.dns.final).toBe(T(clientTemplate).dns.final);
+    expect(result.route.final).toBe(T(clientTemplate).route.final);
+    expect(result.route.default_domain_resolver).toBe(T(clientTemplate).route.default_domain_resolver);
     // rule_set must be preserved verbatim from the template — comparing
     // against the source template (instead of a hardcoded count) keeps this
     // assertion valid as rule-sets are added/removed in template edits.
-    expect(result.route.rule_set).toEqual((clientTemplate as any).route.rule_set);
+    expect(result.route.rule_set).toEqual(T(clientTemplate).route.rule_set);
 
     // no leftover placeholder tokens
     const json = JSON.stringify(result);
@@ -122,9 +136,10 @@ describe('template port verification', () => {
     const reg = new PluginRegistry(db);
     await reg.loadAll();
     const result: any = await reg.renderClientOverall([], 'client-default', {});
+    const proxyTpl = T(clientTemplate).outbounds.find((o: any) => o.tag === 'proxy');
     const proxySel = result.outbounds.find((o: any) => o.tag === 'proxy');
-    expect(proxySel.outbounds).toEqual(['auto', 'direct']);
-    expect(result.outbounds).toHaveLength(20);
+    expect(proxySel.outbounds).toEqual(withProxyTags(proxyTpl, []));
+    expect(result.outbounds).toHaveLength(T(clientTemplate).outbounds.length - splicedEntryCount(T(clientTemplate)));
     const json = JSON.stringify(result);
     expect(json).not.toContain('{{');
   });

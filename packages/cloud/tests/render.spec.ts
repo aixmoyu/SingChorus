@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
 import { resetRegistryCache } from '../src/engine/registry';
 import { adminHeaders, api, createInstance, createNode, jsonBody, seed } from './helpers';
+import { SINGBOX_CATALOG, VERSION_NOT_OFFERED } from './seed-baseline';
 
 // D1 storage is reset per test while module state persists in the single
 // worker — drop the init memo so every test re-runs the schema setup.
@@ -125,9 +126,9 @@ describe('POST /api/render/deploy', () => {
     expect(typeof body.entrySh).toBe('string');
   });
 
-  // 版本目录一致性（设计 §13.7）：1.14.9 满足 compat（>=1.14.0 <1.16.0）但
-  // 不在 docker 模板 singbox_version enum 内 → 明确的 SBX_VERSION_NOT_OFFERED
-  // 而不是笼统的参数 enum 错误。
+  // 版本目录一致性（设计 §13.7）：输入版本满足全部种子 compat 但不在
+  // docker 模板 singbox_version enum 内 → 明确的 SBX_VERSION_NOT_OFFERED
+  // 而不是笼统的参数 enum 错误。输入与目录均从 seed-baseline 推导。
   it('returns 400 SBX_VERSION_NOT_OFFERED when the pinned version is outside the docker template enum', async () => {
     await seed();
     const node = await createNode();
@@ -144,12 +145,15 @@ describe('POST /api/render/deploy', () => {
     const res = await api('/api/render/deploy', {
       method: 'POST',
       headers: await adminHeaders(),
-      body: JSON.stringify({ instances, singboxVersion: '1.14.9' }),
+      body: JSON.stringify({ instances, singboxVersion: VERSION_NOT_OFFERED }),
     });
     expect(res.status).toBe(400);
     const body = await jsonBody(res);
     expect(body.error.code).toBe('SBX_VERSION_NOT_OFFERED');
-    expect(body.error.message).toContain('1.14.1');
+    // 错误信息列出全部可选版本
+    for (const v of SINGBOX_CATALOG) {
+      expect(body.error.message).toContain(v);
+    }
   });
 });
 

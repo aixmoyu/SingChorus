@@ -2,6 +2,18 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { initTestHome, makeEntry, type TestHome } from './helpers.js';
 import type { ChorusCore } from '../src/core.js';
 import type { ConfigEntry } from '../src/schemas/config.js';
+import { composeTag, slugifyName } from '../src/tag.js';
+import { REQUEST_BUDGET_MS } from '../src/services/cloud-client.js';
+
+/** 从 composeTag 的实际输出构造对照正则：只钉「core 注入 tag」这个 wiring，
+ * 短名映射 / slug 规则 / 后缀长度都随实现推导（实现演进测试不破）。 */
+function tagRe(nodeName: string, protocolType: string): RegExp {
+  const slug = slugifyName(nodeName);
+  const sample = composeTag(nodeName, protocolType);
+  const short = sample.slice(slug.length + 1, sample.lastIndexOf('-'));
+  const suffixLen = sample.length - slug.length - short.length - 2;
+  return new RegExp(`^${slug}-${short}-[a-z0-9]{${suffixLen}}$`);
+}
 
 /**
  * ChorusCore 编排层 ST：真实 LocalStore/ConfigManager + mock 的 CloudClient /
@@ -80,8 +92,8 @@ describe('ChorusCore 基础编排', () => {
       client_config: { type: 'vless', server_port: 9600 },
     });
     const e1 = await core.generateAndAdd('gen-1', 'edge', 'vless', { uuid: 'u1' });
-    // tag 留空 → core 注入 <node-name>-<protocol>-<random>
-    expect(cloud.generateConfig).toHaveBeenCalledWith('vless', expect.objectContaining({ uuid: 'u1', tag: expect.stringMatching(/^node-[a-z0-9]{8}-vless-[a-z0-9]{6}$/) }));
+    // tag 留空 → core 注入 <node-name>-<protocol>-<random>（形状由 tagRe 推导）
+    expect(cloud.generateConfig).toHaveBeenCalledWith('vless', expect.objectContaining({ uuid: 'u1', tag: expect.stringMatching(tagRe(core.getIdentity().name, 'vless')) }));
     expect(e1.enabled).toBe(true);
     expect(e1.server_config.listen_port).toBe(9600);
     // 重新生成同名配置 → 覆盖而不是报错
@@ -96,10 +108,10 @@ describe('ChorusCore 基础编排', () => {
     // 显式 tag → 不改写
     await core.generateConfig('hysteria2', { tag: 'my-tag', domain: 'a.com' });
     expect(cloud.generateConfig).toHaveBeenLastCalledWith('hysteria2', { tag: 'my-tag', domain: 'a.com' });
-    // 空串等价于未填 → 注入，且协议短名走映射（hysteria2 → hy2）
+    // 空串等价于未填 → 注入，且协议短名走映射（hysteria2 → hy2，由 tagRe 从实现推导）
     await core.generateConfig('hysteria2', { domain: 'a.com', tag: '' });
     const called = cloud.generateConfig.mock.lastCall![1] as Record<string, unknown>;
-    expect(called.tag).toMatch(/^node-[a-z0-9]{8}-hy2-[a-z0-9]{6}$/);
+    expect(called.tag).toMatch(tagRe(core.getIdentity().name, 'hysteria2'));
     // 后缀每次随机
     await core.generateConfig('hysteria2', { domain: 'a.com' });
     const again = cloud.generateConfig.mock.lastCall![1] as Record<string, unknown>;
@@ -108,7 +120,7 @@ describe('ChorusCore 基础编排', () => {
     core.updateAppConfig({ node_name: 'Tokyo 01' });
     await core.generateConfig('vless-reality-vision', {});
     const slugged = cloud.generateConfig.mock.lastCall![1] as Record<string, unknown>;
-    expect(slugged.tag).toMatch(/^tokyo-01-vless-[a-z0-9]{6}$/);
+    expect(slugged.tag).toMatch(tagRe('Tokyo 01', 'vless-reality-vision'));
     core.updateAppConfig({ node_name: '' });
   });
 
@@ -221,14 +233,15 @@ describe('ChorusCore.syncAllToCloud（双向对账）', () => {
     cloud.uploadNodeClient.mockImplementation(async () => ({}));
   });
 
-  it('拉取预算（25s）内挂起的远端节点不会阻塞整轮（core-P3）', async () => {
+  it('拉取预算内挂起的远端节点不会阻塞整轮（core-P3）', async () => {
     await steadyState();
     vi.useFakeTimers();
     cloud.listNodes.mockResolvedValue([{ fingerprint: 'fp-hang' }]);
     cloud.getNodeClients.mockImplementation(() => new Promise(() => { /* 永不返回 */ }));
     const pending = core.syncAllToCloud();
     const assertion = expect(pending).resolves.toMatchObject({ pulled: 0, synced: 0 });
-    await vi.advanceTimersByTimeAsync(26_000);
+    // 预算常量 + 余量（预算本身见 REQUEST_BUDGET_MS）
+    await vi.advanceTimersByTimeAsync(REQUEST_BUDGET_MS + 1_000);
     await assertion;
     vi.useRealTimers();
     cloud.listNodes.mockResolvedValue([]);

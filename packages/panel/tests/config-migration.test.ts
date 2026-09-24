@@ -9,10 +9,14 @@ describe('config migration: legacy "unset" sentinel', () => {
   let app: Application
   let home: string
   let cookie: string
+  let DEFAULT_CLOUD_URL: string
 
   beforeAll(async () => {
     home = await makeTempHome()
     process.env.HOME = home
+    // server 模块（含 core-provider 的模块级 LocalStore）必须在 HOME 隔离后
+    // 动态导入 —— 与 loadApp 同理，否则会绑定到真实用户目录。
+    ;({ DEFAULT_CLOUD_URL } = await import('../server/core-provider.js'))
     // Pre-seed a config carrying the historical sentinel value.
     const dir = path.join(home, '.singchorus', 'panel')
     await mkdir(dir, { recursive: true })
@@ -29,7 +33,7 @@ describe('config migration: legacy "unset" sentinel', () => {
     const res = await request(app).get('/api/settings').set('Cookie', cookie)
     expect(res.status).toBe(200)
     expect(res.body.core_url).toBe('')
-    expect(res.body.effective_cloud_url).toBe('http://localhost:8787')
+    expect(res.body.effective_cloud_url).toBe(DEFAULT_CLOUD_URL)
 
     const raw = JSON.parse(
       await readFile(path.join(home, '.singchorus', 'panel', 'config.json'), 'utf-8'),

@@ -5,8 +5,8 @@ import { randomUUID } from 'crypto';
 import { LockTimeoutError, withFileLockSync } from './lock.js';
 import { consoleLogger, type Logger } from '../logger.js';
 
-const BACKUP_KEEP = 5;
-const HEALTH_CHECK_TIMEOUT = 30;
+export const BACKUP_KEEP = 5;
+export const HEALTH_CHECK_TIMEOUT = 30;
 const DOCKER_EXEC_TIMEOUT = 60_000;
 
 export class DockerError extends Error {

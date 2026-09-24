@@ -31,7 +31,7 @@ function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-const RETRY_DELAYS = [1000, 4000, 16000, 64000];
+export const RETRY_DELAYS = [1000, 4000, 16000, 64000];
 const DEFAULT_TIMEOUT = 10_000;
 
 /** Summarize an error-response body for logs, e.g. `: [KV_UNAVAILABLE] Config

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { DockerManager, DeployInProgressError } from '../src/services/docker-manager.js';
+import { DockerManager, DeployInProgressError, HEALTH_CHECK_TIMEOUT, BACKUP_KEEP } from '../src/services/docker-manager.js';
 import type { DeployMeta } from '../src/services/docker-manager.js';
 
 // mock child_process.execFile：按 handler 路由 docker 子命令，避免真实 docker 依赖。
@@ -135,8 +135,8 @@ describe('DockerManager.deployRendered', () => {
     vi.useFakeTimers();
     const pending = mgr.deployRendered({ new: true }, 'services: {}\n', '#!/bin/sh\n');
     const assertion = expect(pending).rejects.toThrow(/failed to become healthy/i);
-    // 健康检查窗口 30s、3s 轮询
-    await vi.advanceTimersByTimeAsync(31_000);
+    // 健康检查窗口（HEALTH_CHECK_TIMEOUT）+ 3s 轮询余量
+    await vi.advanceTimersByTimeAsync(HEALTH_CHECK_TIMEOUT * 1000 + 3_000);
     await assertion;
 
     // 回滚：config.json 恢复旧内容，栈被 down
@@ -204,7 +204,8 @@ describe('DockerManager deploy-meta（§4.4）', () => {
     vi.useFakeTimers();
     const pending = mgr.deployRendered({}, 'services: {}\n', '#!/bin/sh\n', { singboxVersion: '1.12.9' });
     const assertion = expect(pending).rejects.toThrow(/failed to become healthy/i);
-    await vi.advanceTimersByTimeAsync(31_000);
+    // 健康检查窗口（HEALTH_CHECK_TIMEOUT）+ 3s 轮询余量
+    await vi.advanceTimersByTimeAsync(HEALTH_CHECK_TIMEOUT * 1000 + 3_000);
     await assertion;
     expect(existsSync(join(dir, 'deploy-meta.json'))).toBe(false);
     expect(mgr.getDeployMeta()).toBeNull();
@@ -268,7 +269,7 @@ describe('DockerManager 生命周期', () => {
 });
 
 describe('DockerManager 备份治理', () => {
-  it('多次部署后 config.json.bak 数量不超过 5（BACKUP_KEEP）', async () => {
+  it(`多次部署后 config.json.bak 数量不超过 ${BACKUP_KEEP}（BACKUP_KEEP）`, async () => {
     handler = (_c, args, cb) => {
       if (sub(args) === 'ps') return setImmediate(() => cb(null, '[{"State":"running"}]', ''));
       return setImmediate(() => cb(null, '', ''));
@@ -276,15 +277,14 @@ describe('DockerManager 备份治理', () => {
     const { mgr, dir } = newMgr();
     const dataDir = join(dir, 'data');
     mkdirSync(dataDir, { recursive: true });
-    // 预置 8 份历史备份 + 当前 config
-    for (let i = 0; i < 8; i++) {
-      writeFileSync(join(dataDir, `config.json.bak.2026-01-0${i}T00-00-00-000Z`), '{}');
+    writeFileSync(join(dataDir, 'config.json'), '{"v":0}');
+    // 通过真实部署路径产生历史备份（每次部署回滚一份当前 config），
+    // 不手工拼备份文件名 —— 备份命名格式演进时测试仍有效。
+    for (let i = 1; i <= BACKUP_KEEP + 3; i++) {
+      await mgr.deployRendered({ v: i }, 'services: {}\n', '#!/bin/sh\n');
     }
-    writeFileSync(join(dataDir, 'config.json'), '{"current":true}');
-
-    await mgr.deployRendered({ v: 1 }, 'services: {}\n', '#!/bin/sh\n');
     const baks = readdirSync(dataDir).filter((f) => f.startsWith('config.json.bak.'));
-    expect(baks.length).toBeLessThanOrEqual(5);
+    expect(baks.length).toBeLessThanOrEqual(BACKUP_KEEP);
     // 本次部署又生成了一份备份
     expect(baks.length).toBeGreaterThanOrEqual(1);
   });
