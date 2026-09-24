@@ -57,6 +57,9 @@ export async function initializeDatabase(db: D1Database): Promise<void> {
 const ALTER_TABLES = [
   'ALTER TABLE templates ADD COLUMN singbox_compat TEXT',
   'ALTER TABLE nodes ADD COLUMN singbox_version TEXT',
+  // NOT NULL 在 ADD COLUMN 里必须带 DEFAULT（SQLite 限制）；存量行拿 ''，
+  // 新 INSERT 始终显式写该列，行为与全新库一致。
+  "ALTER TABLE subscriptions ADD COLUMN singbox_version TEXT NOT NULL DEFAULT ''",
 ];
 
 // Design note: overall template bindings are split by scope —

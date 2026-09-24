@@ -358,7 +358,7 @@ describe('Subscription Version Binding (delivery)', () => {
     const res = await api('/api/singbox-versions', { headers: await adminHeaders() });
     expect(res.status).toBe(200);
     const body = await jsonBody(res);
-    expect(body.versions).toEqual(['1.15.0', '1.14.1']);
+    expect(body.versions).toEqual(['1.14.1']);
   });
 });
 

@@ -13,7 +13,7 @@ beforeEach(() => {
 // 种子模板的 compat 基线（docs/design/singbox-version-management.md §3.2，基于 sing-box 1.14.1）：
 // 全部 5 个种子统一为 >=1.14.0 <1.16.0（hysteria2 · vless-reality-vision ·
 // server-default · client-default · docker-default）。
-// docker-default 的 singbox_version param default = "1.14.1"，enum = ["1.14.1", "1.15.0"]；
+// docker-default 的 singbox_version param default = "1.14.1"，enum = ["1.14.1"]；
 // 镜像 tag 带 v 前缀（ghcr 实际 tag 为 v1.14.x），param 值为无 v 前缀的 semver。
 
 describe('版本过滤（纵深防御第 1 层）', () => {
@@ -180,17 +180,19 @@ describe('POST /api/render/deploy 版本注入与校验', () => {
     expect(body.composeYaml).toContain('ghcr.io/sagernet/sing-box:v1.14.1');
   });
 
-  it('显式 singboxVersion 优先于 param default，镜像 pin 到该版本', async () => {
+  it('显式 singboxVersion 在 enum 内 → 镜像 pin 到该版本', async () => {
+    // 版本目录收缩后 enum 只有 1.14.1（= param default）；显式传入 enum 外
+    // 的版本由 SBX_VERSION_NOT_OFFERED 拦截（render.spec 覆盖）。
     const instances = await seededInstances();
     const res = await api('/api/render/deploy', {
       method: 'POST',
       headers: await adminHeaders(),
-      body: JSON.stringify({ instances, singboxVersion: '1.15.0' }),
+      body: JSON.stringify({ instances, singboxVersion: '1.14.1' }),
     });
     expect(res.status).toBe(200);
     const body = await jsonBody(res);
-    expect(body.singboxVersion).toBe('1.15.0');
-    expect(body.composeYaml).toContain('ghcr.io/sagernet/sing-box:v1.15.0');
+    expect(body.singboxVersion).toBe('1.14.1');
+    expect(body.composeYaml).toContain('ghcr.io/sagernet/sing-box:v1.14.1');
   });
 
   it('版本与全部种子模板冲突 → 400 SBX_VERSION_INCOMPATIBLE（列出全部冲突项）', async () => {

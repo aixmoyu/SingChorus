@@ -150,7 +150,6 @@ describe('POST /api/render/deploy', () => {
     const body = await jsonBody(res);
     expect(body.error.code).toBe('SBX_VERSION_NOT_OFFERED');
     expect(body.error.message).toContain('1.14.1');
-    expect(body.error.message).toContain('1.15.0');
   });
 });
 
