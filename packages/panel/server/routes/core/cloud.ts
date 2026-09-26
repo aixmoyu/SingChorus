@@ -17,7 +17,11 @@ const createSubscriptionSchema = z.object({
   name: z.string().optional(),
   path: z.string().min(1).max(64).optional(),
   token: z.string().optional(),
-  singboxVersion: z.string().min(1),
+  // 交付类型必须透传（url 型不绑定版本）；singboxVersion 的语义校验
+  // （singbox 必填 / url 禁传）由云端 superRefine 做，代理层只挡形状错误，
+  // 避免两端规则漂移（曾因这里写成必填导致 url 型订阅创建直接 422）。
+  type: z.enum(['singbox', 'url']).default('singbox'),
+  singboxVersion: z.string().optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: recordSchema.optional(),
   active: z.boolean().optional(),
@@ -27,7 +31,8 @@ const updateSubscriptionSchema = z.object({
   name: z.string().optional(),
   path: z.string().min(1).max(64).optional(),
   token: z.string().optional(),
-  singboxVersion: z.string().min(1).optional(),
+  type: z.string().optional(),
+  singboxVersion: z.string().optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: recordSchema.optional(),
   active: z.boolean().optional(),

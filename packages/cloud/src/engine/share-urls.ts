@@ -19,6 +19,18 @@ function q(v: string): string {
   return encodeURIComponent(v);
 }
 
+/**
+ * UTF-8 安全的 base64。btoa 只支持 Latin1，中文 tag/password 会抛
+ * InvalidCharacterError——本模块契约是「转不出返回 null」而非抛异常，
+ * 故统一走这里（先编码成字节再逐字节转 Latin1）。
+ */
+function b64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
 /** 分享链接的名称片段（# 后），percent-encoded。 */
 function nameFragment(tag: unknown): string {
   return typeof tag === 'string' && tag ? `#${q(tag)}` : '';
@@ -141,7 +153,7 @@ export function outboundToShareUrl(outbound: unknown): string | null {
       if (typeof ob.method !== 'string' || !ob.method
         || typeof ob.password !== 'string' || !ob.password) return null;
       // SIP002：userinfo = base64url(method:password)
-      const userinfo = btoa(`${ob.method}:${ob.password}`)
+      const userinfo = b64(`${ob.method}:${ob.password}`)
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
       return `ss://${userinfo}@${authority}${name}`;
     }
@@ -170,7 +182,7 @@ export function outboundToShareUrl(outbound: unknown): string | null {
         alpn: tls?.alpn?.join(',') ?? '',
         fp: tls?.utls?.enabled ? tls.utls.fingerprint ?? '' : '',
       };
-      return `vmess://${btoa(JSON.stringify(v2))}`;
+      return `vmess://${b64(JSON.stringify(v2))}`;
     }
     default:
       return null;

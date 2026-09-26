@@ -114,6 +114,31 @@ describe('outboundToShareUrl (unit)', () => {
     });
   });
 
+  it('中文 tag/password → 不抛异常，vmess base64 内保留中文（UTF-8 安全）', () => {
+    // 回归：btoa 只支持 Latin1，中文会抛 InvalidCharacterError，炸掉整个订阅交付
+    const utf8FromB64 = (b: string) =>
+      new TextDecoder().decode(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)));
+    const url = expectLink(outboundToShareUrl({
+      type: 'vmess',
+      tag: '日本节点-01',
+      server: 'v.example.com',
+      server_port: 443,
+      uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    }), 'vmess://');
+    expect(JSON.parse(utf8FromB64(url.slice('vmess://'.length)))).toMatchObject({ ps: '日本节点-01' });
+
+    const ss = expectLink(outboundToShareUrl({
+      type: 'shadowsocks',
+      tag: '中文密码',
+      server: 's.example.com',
+      server_port: 8388,
+      method: 'aes-256-gcm',
+      password: '密码123',
+    }), 'ss://', `#${encodeURIComponent('中文密码')}`);
+    const userinfo = ss.slice('ss://'.length).split('@')[0]!;
+    expect(utf8FromB64(userinfo.replace(/-/g, '+').replace(/_/g, '/'))).toBe('aes-256-gcm:密码123');
+  });
+
   it('无 TLS 的 vless → security=none 省略（纯裸协议链接）', () => {
     expect(outboundToShareUrl({
       type: 'vless', tag: 'plain', server: 'p.example.com', server_port: 80, uuid: 'u1',

@@ -517,6 +517,20 @@ describe('cloud/deploy routes against a stubbed core', () => {
     expect(delFail.body.error.code).toBe('CLOUD_DELETE_FAILED')
   })
 
+  it('url 型订阅创建：不带 singboxVersion 也放行，type 原样透传给 core（回归：代理层曾把版本写成必填）', async () => {
+    let seen: unknown
+    h.behavior.createSubscription = (data) => {
+      seen = data
+      return { id: 'sub-url' }
+    }
+    const res = await authed(request(app).post('/api/core/cloud/subscriptions'), cookie)
+      .send({ name: 'u1', path: 'u1', type: 'url' })
+    expect(res.status).toBe(201)
+    expect(res.body.subscription.id).toBe('sub-url')
+    expect(seen).toMatchObject({ type: 'url' })
+    expect(seen).not.toHaveProperty('singboxVersion')
+  })
+
   // --- remote configs ---
 
   it('lists / loads / deletes remote configs with correct 404 + sync wiring', async () => {
