@@ -60,6 +60,8 @@ const ALTER_TABLES = [
   // NOT NULL 在 ADD COLUMN 里必须带 DEFAULT（SQLite 限制）；存量行拿 ''，
   // 新 INSERT 始终显式写该列，行为与全新库一致。
   "ALTER TABLE subscriptions ADD COLUMN singbox_version TEXT NOT NULL DEFAULT ''",
+  // 同上（NOT NULL 必须带 DEFAULT）：存量行补默认类型 singbox，行为不变。
+  "ALTER TABLE subscriptions ADD COLUMN type TEXT NOT NULL DEFAULT 'singbox'",
 ];
 
 // Design note: overall template bindings are split by scope —
@@ -119,10 +121,14 @@ const CREATE_TABLES = [
   // 校验 overall-client 模板与各 instance 协议模板的 compat（设计 §13.1/§13.2）。
   // 注：不要在 CREATE TABLE SQL 内写 `--` 注释，eager DDL 会把它带进
   // sqlite_master 破坏 schema-fingerprint 一致性。
+  // type: 'singbox'（sing-box JSON 配置交付，默认）| 'url'（分享链接交付，
+  // 一行一条 vless:// hysteria2:// 等 URI）。url 型不绑定 sing-box 版本与
+  // overall 模板（singbox_version 存 ''、overall_template_id 存 NULL）。
   `CREATE TABLE IF NOT EXISTS subscriptions (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     path TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL DEFAULT 'singbox',
     singbox_version TEXT NOT NULL,
     overall_template_id TEXT DEFAULT NULL,
     overall_params TEXT NOT NULL DEFAULT '{}',

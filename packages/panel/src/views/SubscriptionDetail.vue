@@ -11,6 +11,11 @@
     <n-card v-if="form">
       <form @submit.prevent="handleSave">
         <n-form :model="form" :rules="formRules" ref="formRef" :label-placement="labelPlacement" label-width="160">
+          <n-form-item label="Type">
+            <n-tag :type="form.type === 'url' ? 'warning' : 'info'" size="small">
+              {{ form.type === 'url' ? '分享链接（URI 列表）' : 'sing-box 配置（JSON）' }}
+            </n-tag>
+          </n-form-item>
           <n-form-item label="Name" path="name">
             <n-input v-model:value="form.name" placeholder="Leave empty to use path" />
           </n-form-item>
@@ -24,23 +29,25 @@
               <n-button @click="copyToken">Copy</n-button>
             </n-input-group>
           </n-form-item>
-          <n-form-item label="sing-box Version" path="singboxVersion">
-            <n-select
-              v-model:value="form.singboxVersion"
-              :options="versionOptions"
-              filterable
-              tag
-              placeholder="Select the consumer sing-box version"
-            />
-          </n-form-item>
-          <n-form-item label="Overall Template">
-            <n-select
-              v-model:value="form.overallTemplateId"
-              :options="clientTemplateOptions"
-              clearable
-              placeholder="Select client overall template (optional)"
-            />
-          </n-form-item>
+          <template v-if="form.type === 'singbox'">
+            <n-form-item label="sing-box Version" path="singboxVersion">
+              <n-select
+                v-model:value="form.singboxVersion"
+                :options="versionOptions"
+                filterable
+                tag
+                placeholder="Select the consumer sing-box version"
+              />
+            </n-form-item>
+            <n-form-item label="Overall Template">
+              <n-select
+                v-model:value="form.overallTemplateId"
+                :options="clientTemplateOptions"
+                clearable
+                placeholder="Select client overall template (optional)"
+              />
+            </n-form-item>
+          </template>
           <n-form-item label="Active">
             <n-switch v-model:value="form.active" />
           </n-form-item>
@@ -77,7 +84,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { NCard, NForm, NFormItem, NInput, NInputGroup, NSelect, NSwitch, NButton, NModal, NAlert, NSpin, NResult, useMessage, useDialog } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInput, NInputGroup, NSelect, NSwitch, NTag, NButton, NModal, NAlert, NSpin, NResult, useMessage, useDialog } from 'naive-ui'
 import { useSubscriptionStore } from '@/stores/subscription'
 import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
@@ -153,18 +160,21 @@ async function handleSave() {
 
   saving.value = true
   try {
+    // url 型不参与版本/模板语义：这些字段不进 patch（云端会显式拒绝）。
     const patch: {
       name: string
       path: string
-      singboxVersion: string
-      overallTemplateId: string | null
+      singboxVersion?: string
+      overallTemplateId?: string | null
       active: boolean
     } = {
       name: form.value.name,
       path: form.value.path,
-      singboxVersion: form.value.singboxVersion,
-      overallTemplateId: form.value.overallTemplateId,
       active: form.value.active,
+    }
+    if (form.value.type === 'singbox') {
+      patch.singboxVersion = form.value.singboxVersion
+      patch.overallTemplateId = form.value.overallTemplateId
     }
     const updated = await subscriptionStore.updateSubscription(form.value.id, patch)
     if (!updated) {

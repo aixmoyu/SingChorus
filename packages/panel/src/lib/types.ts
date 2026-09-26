@@ -49,11 +49,17 @@ export interface DeployStatus {
   started_at?: string
 }
 
+// 订阅交付类型：'singbox' = sing-box JSON 配置；'url' = 分享链接列表
+// （vless:// hysteria2:// 等，text/plain 交付）。
+export type SubscriptionType = 'singbox' | 'url'
+
 export interface Subscription {
   id: string
   name: string
   path: string
-  /** 订阅绑定的 sing-box 版本（必填）：交付端 compat 校验依据（设计 §13.1）。 */
+  /** 交付类型（见 SubscriptionType）。url 型不绑定 sing-box 版本与 overall 模板。 */
+  type: SubscriptionType
+  /** singbox 型必填（交付端 compat 校验依据，设计 §13.1）；url 型恒为 ''。 */
   singboxVersion: string
   overallTemplateId: string | null
   overallParams: string

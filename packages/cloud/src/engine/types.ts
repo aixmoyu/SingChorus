@@ -143,6 +143,7 @@ export interface SubscriptionRow {
   id: string;
   name: string;
   path: string;
+  type: string;
   singbox_version: string;
   overall_template_id: string | null;
   overall_params: string;
@@ -152,11 +153,17 @@ export interface SubscriptionRow {
   updated_at: string;
 }
 
+// 订阅交付类型：'singbox' = sing-box JSON 配置；'url' = 分享链接（URI 列表）。
+export const SUBSCRIPTION_TYPES = ['singbox', 'url'] as const;
+export type SubscriptionType = typeof SUBSCRIPTION_TYPES[number];
+
 export interface Subscription {
   id: string;
   name: string;
   path: string;
-  /** 订阅绑定的 sing-box 版本（必填）：交付端 compat 校验的依据（设计 §13.1）。 */
+  /** 交付类型（见 SUBSCRIPTION_TYPES）。url 型不绑定 sing-box 版本与 overall 模板。 */
+  type: SubscriptionType;
+  /** 订阅绑定的 sing-box 版本：singbox 型必填（compat 校验依据）；url 型恒为 ''。 */
   singboxVersion: string;
   overallTemplateId: string | null;
   overallParams: string;
@@ -171,6 +178,7 @@ export function parseSubscriptionRow(row: SubscriptionRow): Subscription {
     id: row.id,
     name: row.name,
     path: row.path,
+    type: row.type === 'url' ? 'url' : 'singbox',
     singboxVersion: row.singbox_version,
     overallTemplateId: row.overall_template_id ?? null,
     overallParams: row.overall_params,

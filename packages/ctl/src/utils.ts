@@ -194,15 +194,20 @@ export function printSyncStatuses(statuses: Record<string, string>, failures?: A
 
 export function printSubscription(sub: {
   id?: string; name?: string; path?: string; active?: boolean;
+  type?: string;
   singboxVersion?: string;
   overallTemplateId?: string | null; token?: string; createdAt?: string; updatedAt?: string;
 }) {
   if (isJson()) { printJson(sub); return; }
+  const isUrl = sub.type === 'url';
   console.log(`\n\u8ba2\u9605: ${sub.name || ''}`);
   console.log(`  \u8def\u5f84: ${sub.path || ''}`);
+  console.log(`  \u7c7b\u578b: ${isUrl ? '\u5206\u4eab\u94fe\u63a5\uff08URI \u5217\u8868\uff09' : 'sing-box \u914d\u7f6e\uff08JSON\uff09'}`);
   console.log(`  \u72b6\u6001: ${fmtBool(!!sub.active)}`);
-  console.log(`  sing-box \u7248\u672c: ${sub.singboxVersion || '(\u672a\u7ed1\u5b9a)'}`);
-  console.log(`  \u6574\u4f53\u6a21\u677f: ${sub.overallTemplateId || '(\u65e0\uff0c\u4f7f\u7528\u9ed8\u8ba4\u5408\u5e76)'}`);
+  if (!isUrl) {
+    console.log(`  sing-box \u7248\u672c: ${sub.singboxVersion || '(\u672a\u7ed1\u5b9a)'}`);
+    console.log(`  \u6574\u4f53\u6a21\u677f: ${sub.overallTemplateId || '(\u65e0\uff0c\u4f7f\u7528\u9ed8\u8ba4\u5408\u5e76)'}`);
+  }
   console.log(`  \u521b\u5efa: ${sub.createdAt || ''}`);
   console.log(`  \u66f4\u65b0: ${sub.updatedAt || ''}`);
   console.log(`  \u8ba2\u9605 URL: /s/${sub.path || ''}?token=${(sub.token || '').slice(0, 8)}...`);

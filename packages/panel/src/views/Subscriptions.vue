@@ -51,7 +51,7 @@
 import { ref, computed, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  NDataTable, NButton, NSpace, NModal, NCard, NText, NEmpty, NSwitch, NInput, NInputGroup, NSpin, useMessage,
+  NDataTable, NButton, NSpace, NModal, NCard, NText, NEmpty, NSwitch, NInput, NInputGroup, NSpin, NTag, useMessage,
 } from 'naive-ui'
 import { useSubscriptionStore } from '@/stores/subscription'
 import { useSettingsStore } from '@/stores/settings'
@@ -77,6 +77,12 @@ const linkTarget = ref<Subscription | null>(null)
 const columns = [
   { title: 'Name', key: 'name' },
   { title: 'Path', key: 'path' },
+  {
+    title: 'Type', key: 'type',
+    render: (row: Subscription) => h(NTag, {
+      size: 'small', type: row.type === 'url' ? 'warning' : 'info', bordered: false,
+    }, { default: () => (row.type === 'url' ? '分享链接' : 'sing-box') }),
+  },
   {
     title: 'Active', key: 'active',
     render: (row: Subscription) => h(NSwitch, {

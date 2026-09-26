@@ -6,6 +6,7 @@ import { PluginRegistry, ProtocolInstanceConfig } from '../engine/registry';
 import { PluginError } from '../engine/errors';
 import { isValidSingboxVersion, isCompatSatisfied } from '../engine/compat';
 import { parseSubscriptionRow, type SubscriptionRow } from '../engine/types';
+import { outboundToShareUrl } from '../engine/share-urls';
 import { hashToken } from '../auth/jwt';
 import { fireAndForget } from '../services/fire-and-forget';
 import type { Logger } from '../logger';
@@ -43,8 +44,13 @@ export function resetSubscriptionCaches(): void {
  * so a rotated token is rejected; a subscription disabled while D1 was
  * healthy has its cache entry invalidated on the 403 path. Staleness is
  * bounded by the 24h lazy purge on write.
+ *
+ * Payload format: singbox 型存原始渲染 JSON；url 型存标记对象
+ * { __format: 'share-urls', text }（config 列是 TEXT，靠标记区分两种交付，
+ * serveStaleDelivery 按标记决定 JSON / 纯文本响应）。
  */
 const SUB_CACHE_TTL_DAYS = 1;
+const SHARE_CACHE_FORMAT = 'share-urls';
 /**
  * Delivery results are written at most once per 5min per path per isolate —
  * identical rationale to CONFIGS_TTL_MS: keeps write volume (and row
@@ -57,11 +63,15 @@ const subCacheWriteAt = new Map<string, number>();
  * never break a successful delivery. Also lazily purges entries older than
  * the 24h staleness bound. */
 async function writeDeliveryCache(
-  env: Env, logger: Logger, path: string, token: string, active: boolean, config: unknown,
+  env: Env, logger: Logger, path: string, token: string, active: boolean,
+  config: unknown, format: 'json' | 'text' = 'json',
 ): Promise<void> {
   const last = subCacheWriteAt.get(path) ?? 0;
   if (Date.now() - last < SUB_CACHE_WRITE_INTERVAL_MS) return;
   subCacheWriteAt.set(path, Date.now());
+  const stored = format === 'text'
+    ? JSON.stringify({ __format: SHARE_CACHE_FORMAT, text: config })
+    : JSON.stringify(config);
   try {
     await env.DB.batch([
       env.DB.prepare(
@@ -72,7 +82,7 @@ async function writeDeliveryCache(
            active = excluded.active,
            config = excluded.config,
            updated_at = excluded.updated_at`,
-      ).bind(path, await hashToken(token), active ? 1 : 0, JSON.stringify(config)),
+      ).bind(path, await hashToken(token), active ? 1 : 0, stored),
       env.DB.prepare(
         `DELETE FROM sub_delivery_cache WHERE updated_at < datetime('now', '-${SUB_CACHE_TTL_DAYS} day')`,
       ),
@@ -93,7 +103,12 @@ async function serveStaleDelivery(
     ).bind(path).first<{ token_hash: string; active: number; config: string }>();
     if (!row || !row.config || !row.active) return null;
     if (!row.token_hash || row.token_hash !== await hashToken(token)) return null;
-    return c.json(JSON.parse(row.config), 200, { 'X-Subscription-Cache': 'stale' });
+    const parsed = JSON.parse(row.config);
+    // url 型交付缓存的是标记对象 → 原样回纯文本；否则是 singbox 渲染 JSON。
+    if (parsed && typeof parsed === 'object' && (parsed as any).__format === SHARE_CACHE_FORMAT) {
+      return c.body((parsed as any).text as string, 200, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Subscription-Cache': 'stale' });
+    }
+    return c.json(parsed, 200, { 'X-Subscription-Cache': 'stale' });
   } catch (e) {
     c.get('logger').warn('subscription delivery: stale cache fallback failed', { err: e });
     return null;
@@ -241,6 +256,27 @@ subscriptions.get('/s/:path', async (c) => {
 
   const reg = new PluginRegistry(c.env.DB);
 
+  // url 型订阅（分享链接交付）：不绑定 sing-box 版本 / overall 模板——把每个
+  // instance 的客户端 outbound 转成标准分享链接（vless:// hysteria2:// ...），
+  // 一行一条，text/plain 返回。无 compat 概念（消费方是 V2rayN/NekoBox 等，
+  // 不是 sing-box）；转不出的 instance 跳过，与 singbox 型「坏 instance 不挂
+  // 掉整个订阅」的语义一致；全部转不出才 500（明示错误）。
+  if (sub.type === 'url') {
+    const lines: string[] = [];
+    for (const cfg of configs) {
+      const url = outboundToShareUrl(cfg.clientConfig);
+      if (url) lines.push(url);
+    }
+    if (lines.length === 0) {
+      return c.json({
+        error: { code: 'SHARE_URL_NONE', message: 'No active instance is convertible to a share URL (unsupported protocol or missing fields)' },
+      }, 500);
+    }
+    const text = lines.join('\n');
+    await writeDeliveryCache(c.env, c.get('logger'), path, token, sub.active, text, 'text');
+    return c.body(text, 200, { 'Content-Type': 'text/plain; charset=utf-8' });
+  }
+
   // 订阅绑定的 sing-box 版本（必填列）：交付端 compat 校验的唯一依据。
   const subVersion = sub.singboxVersion;
 
@@ -367,16 +403,36 @@ const createSubSchema = z.object({
   name: z.string().max(128).optional(),
   path: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/, 'Path must be lowercase alphanumeric with hyphens'),
   token: z.string().min(8).max(128).optional(),
-  singboxVersion: singboxVersionSchema,
+  // 交付类型：'singbox'（默认，sing-box JSON）| 'url'（分享链接列表）。
+  type: z.enum(['singbox', 'url']).default('singbox'),
+  singboxVersion: singboxVersionSchema.optional(),
   overallTemplateId: z.string().optional(),
   overallParams: z.record(z.unknown()).optional(),
   active: z.boolean().optional(),
+}).superRefine((val, ctx) => {
+  // singbox 型必须绑定版本（§13.1）；url 型不绑定版本/模板，传了也无意义。
+  if (val.type === 'singbox' && !val.singboxVersion) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['singboxVersion'],
+      message: 'singboxVersion is required for singbox-type subscriptions',
+    });
+  }
+  if (val.type === 'url' && val.singboxVersion !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['singboxVersion'],
+      message: 'singboxVersion is not applicable to url-type subscriptions (share URLs are not sing-box version bound)',
+    });
+  }
 });
 
 const updateSubSchema = z.object({
   name: z.string().min(1).max(128).optional(),
   path: z.string().min(2).max(64).regex(/^[a-z0-9-]+$/, 'Path must be lowercase alphanumeric with hyphens').optional(),
   token: z.string().min(8).max(128).optional(),
+  // 接收仅为显式拒绝：类型创建后不可变（见 PUT handler）。
+  type: z.string().optional(),
   singboxVersion: singboxVersionSchema.optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: z.record(z.unknown()).optional(),
@@ -411,26 +467,32 @@ subscriptions.post('/api/subscriptions', adminAuth, zValidator('json', createSub
   const subName = body.name || body.path;
   const token = body.token || (crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, ''));
   const activeVal = body.active !== false ? '1' : '0';
+  // url 型不绑定版本/模板：版本存 ''（NOT NULL 列的空值约定），模板存 NULL。
+  const subVersion = body.type === 'url' ? '' : body.singboxVersion!;
+  const overallTemplateId = body.type === 'url' ? null : (body.overallTemplateId ?? null);
 
   const reserved = ['api', 'admin', 'health'];
   if (reserved.includes(body.path)) {
     return c.json({ error: { code: 'SUB_PATH_RESERVED', message: `Path '${body.path}' is reserved` } }, 400);
   }
 
-  // 预校验（§13.7）：绑定模板存在 + 版本 compat，创建时即报错
-  const pre = await validateOverallCompat(c.env, body.overallTemplateId ?? null, body.singboxVersion);
-  if (!pre.ok) return c.json({ error: { code: pre.code, message: pre.message } }, pre.status);
+  // 预校验（§13.7）：绑定模板存在 + 版本 compat，创建时即报错（仅 singbox 型）
+  if (body.type === 'singbox') {
+    const pre = await validateOverallCompat(c.env, overallTemplateId, subVersion);
+    if (!pre.ok) return c.json({ error: { code: pre.code, message: pre.message } }, pre.status);
+  }
 
   try {
     await c.env.DB.prepare(
-      `INSERT INTO subscriptions (id, name, path, singbox_version, overall_template_id, overall_params, token, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO subscriptions (id, name, path, type, singbox_version, overall_template_id, overall_params, token, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       id,
       subName,
       body.path,
-      body.singboxVersion,
-      body.overallTemplateId ?? null,
+      body.type,
+      subVersion,
+      overallTemplateId,
       JSON.stringify(body.overallParams ?? {}),
       token,
       activeVal,
@@ -460,9 +522,20 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
     return c.json({ error: { code: 'SUB_NOT_FOUND', message: `Subscription '${id}' not found` } }, 404);
   }
 
+  // 类型创建后不可变：交付语义完全不同（JSON vs URI 列表），原地换型会让
+  // 已分发的订阅链接行为突变（同「协议 tag 创建后不可变」约定）。
+  if (body.type !== undefined) {
+    return c.json({ error: { code: 'SUB_TYPE_IMMUTABLE', message: 'Subscription type cannot be changed after creation' } }, 400);
+  }
+  // url 型不参与版本/模板语义——这些字段的更新对它无意义，明示报错。
+  const isUrl = existing.type === 'url';
+  if (isUrl && (body.singboxVersion !== undefined || body.overallTemplateId !== undefined || body.overallParams !== undefined)) {
+    return c.json({ error: { code: 'SUB_FIELD_NOT_APPLICABLE', message: 'singboxVersion / overallTemplateId do not apply to url-type subscriptions' } }, 400);
+  }
+
   // 预校验（§13.7）：版本或模板变更时，以「更新后的最终值」比对 compat，
   // 不让订阅更新成注定交付 400/500 的组合
-  if (body.singboxVersion !== undefined || body.overallTemplateId !== undefined) {
+  if (!isUrl && (body.singboxVersion !== undefined || body.overallTemplateId !== undefined)) {
     const finalTemplateId = body.overallTemplateId !== undefined ? body.overallTemplateId : existing.overall_template_id;
     const finalVersion = body.singboxVersion !== undefined ? body.singboxVersion : existing.singbox_version;
     const pre = await validateOverallCompat(c.env, finalTemplateId ?? null, finalVersion);

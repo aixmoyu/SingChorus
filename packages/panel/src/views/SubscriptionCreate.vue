@@ -11,6 +11,12 @@
     <n-card>
       <form @submit.prevent="handleSubmit">
         <n-form :model="form" :rules="formRules" ref="formRef" :label-placement="labelPlacement" label-width="160">
+          <n-form-item label="Subscription Type" path="type">
+            <n-radio-group v-model:value="form.type">
+              <n-radio value="singbox">sing-box 配置（JSON）</n-radio>
+              <n-radio value="url">分享链接（vless:// 等 URI 列表）</n-radio>
+            </n-radio-group>
+          </n-form-item>
           <n-form-item label="Name" path="name">
             <n-input v-model:value="form.name" placeholder="Leave empty to use path" />
           </n-form-item>
@@ -23,23 +29,25 @@
               <n-button @click="generateToken">Generate</n-button>
             </n-input-group>
           </n-form-item>
-          <n-form-item label="sing-box Version" path="singboxVersion">
-            <n-select
-              v-model:value="form.singboxVersion"
-              :options="versionOptions"
-              filterable
-              tag
-              placeholder="Select the consumer sing-box version"
-            />
-          </n-form-item>
-          <n-form-item label="Overall Template">
-            <n-select
-              v-model:value="form.overallTemplateId"
-              :options="clientTemplateOptions"
-              clearable
-              placeholder="Select client overall template (optional)"
-            />
-          </n-form-item>
+          <template v-if="form.type === 'singbox'">
+            <n-form-item label="sing-box Version" path="singboxVersion">
+              <n-select
+                v-model:value="form.singboxVersion"
+                :options="versionOptions"
+                filterable
+                tag
+                placeholder="Select the consumer sing-box version"
+              />
+            </n-form-item>
+            <n-form-item label="Overall Template">
+              <n-select
+                v-model:value="form.overallTemplateId"
+                :options="clientTemplateOptions"
+                clearable
+                placeholder="Select client overall template (optional)"
+              />
+            </n-form-item>
+          </template>
           <n-form-item label="Active">
             <n-switch v-model:value="form.active" />
           </n-form-item>
@@ -70,11 +78,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NCard, NForm, NFormItem, NInput, NInputGroup, NSelect, NSwitch, NButton, NModal, NAlert, useMessage } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInput, NInputGroup, NSelect, NSwitch, NRadio, NRadioGroup, NButton, NModal, NAlert, useMessage } from 'naive-ui'
 import { useSubscriptionStore } from '@/stores/subscription'
 import { extractApiError } from '@/lib/http'
 import { useFormLabelPlacement } from '@/composables/useBreakpoint'
 import { useSubscriptionTemplateOptions } from '@/composables/useSubscriptionTemplateOptions'
+import type { SubscriptionType } from '@/lib/types'
 
 const router = useRouter()
 const message = useMessage()
@@ -84,6 +93,7 @@ const { labelPlacement } = useFormLabelPlacement()
 const { versions, clientTemplateOptions, loadVersions, loadClientTemplates } = useSubscriptionTemplateOptions()
 
 const form = ref({
+  type: 'singbox' as SubscriptionType,
   name: '',
   path: '',
   token: '',
@@ -111,6 +121,11 @@ watch(() => form.value.singboxVersion, (v) => {
   void loadClientTemplates(v)
 })
 
+// 仅 singbox 型需要版本/模板信息；url 型交付纯文本分享链接，两者均不涉及。
+watch(() => form.value.type, (t) => {
+  if (t === 'singbox') void loadVersions()
+})
+
 const submitting = ref(false)
 const showTokenModal = ref(false)
 const createdToken = ref('')
@@ -135,16 +150,21 @@ async function handleSubmit() {
     const payload: {
       name: string
       path: string
-      singboxVersion: string
+      type: SubscriptionType
+      singboxVersion?: string
       overallTemplateId?: string
       active: boolean
       token?: string
     } = {
       name: form.value.name,
       path: form.value.path,
-      singboxVersion: form.value.singboxVersion!,
-      overallTemplateId: form.value.overallTemplateId ?? undefined,
+      type: form.value.type,
       active: form.value.active,
+    }
+    // url 型不绑定版本/模板——字段根本不进 payload（云端也会拒绝）。
+    if (form.value.type === 'singbox') {
+      payload.singboxVersion = form.value.singboxVersion!
+      if (form.value.overallTemplateId) payload.overallTemplateId = form.value.overallTemplateId
     }
     if (form.value.token) payload.token = form.value.token
     const created = await subscriptionStore.createSubscription(payload)

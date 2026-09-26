@@ -20,6 +20,7 @@ subscriptionCommand
           ID: s.id,
           Name: s.name,
           Path: s.path,
+          Type: s.type === 'url' ? 'url' : 'singbox',
           Active: fmtBool(s.active),
         }));
         if (rows.length === 0) {
@@ -50,16 +51,26 @@ subscriptionCommand
 subscriptionCommand
   .command('create')
   .description('创建订阅（token 不传时由云端安全随机生成）')
-  .requiredOption('--singbox-version <ver>', '订阅绑定的 sing-box 版本（X.Y.Z，交付端兼容校验依据）')
+  .option('-t, --type <type>', '交付类型：singbox（sing-box JSON，默认）或 url（分享链接列表）')
+  .option('--singbox-version <ver>', '订阅绑定的 sing-box 版本（X.Y.Z；singbox 型必填，url 型不适用）')
   .option('-n, --name <name>', '订阅名称')
   .option('-p, --path <path>', '订阅路径（默认自动生成）')
   .option('--token <token>', '自定义访问 token')
-  .option('--template <id>', '整体模板 ID')
+  .option('--template <id>', '整体模板 ID（仅 singbox 型）')
   .option('--inactive', '创建为停用状态')
-  .action(async (opts: { singboxVersion: string; name?: string; path?: string; token?: string; template?: string; inactive?: boolean }) => {
+  .action(async (opts: { type?: string; singboxVersion?: string; name?: string; path?: string; token?: string; template?: string; inactive?: boolean }) => {
+    const type = opts.type ?? 'singbox';
+    if (type !== 'singbox' && type !== 'url') fail(`未知类型 '${type}'（可选：singbox / url）`);
+    if (type === 'singbox' && !opts.singboxVersion) {
+      fail('singbox 型订阅必须指定 --singbox-version <ver>（X.Y.Z）');
+    }
+    if (type === 'url' && (opts.singboxVersion || opts.template)) {
+      fail('url 型订阅不绑定 sing-box 版本 / overall 模板，请去掉 --singbox-version / --template');
+    }
     const core = new ChorusCore();
     try {
-      const data: Record<string, unknown> = { singboxVersion: opts.singboxVersion };
+      const data: Record<string, unknown> = { type };
+      if (opts.singboxVersion) data.singboxVersion = opts.singboxVersion;
       if (opts.name) data.name = opts.name;
       if (opts.path) data.path = opts.path;
       if (opts.token) data.token = opts.token;
