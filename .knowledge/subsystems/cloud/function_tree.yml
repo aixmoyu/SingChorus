@@ -1,0 +1,687 @@
+# ════════════════════════════════════════════════════════════════════════════
+# cloud 模块功能树 (packages/cloud/)
+# base_commit: 5ab6e0b5439b72f3af60ca178147e57dc3fc31d9
+# 结构遵循 aet-project-analysis2 assets/modules/function_tree.yml (R1–R7)
+# ════════════════════════════════════════════════════════════════════════════
+
+- id: '1'
+  type: directory
+  name: 接入与请求治理域
+  description: 单一 Hono app 的请求入口：结构化日志、请求 ID 贯穿、数据库就绪保障、统一错误出口与健康检查。
+  children:
+  - id: '11'
+    type: function
+    name: 治理请求日志与追踪
+    description: 每请求生成/透传 X-Request-ID 并产出一条结构化 JSON 访问日志；panel 侧 ID 可贯穿 panel→cloud→Workers Logs。
+    depends_on: []
+    node_context:
+      keywords: ["request_logging", "tracing", "x_request_id", "structured_log"]
+      code_mapping:
+        - "packages/cloud/src/index.ts:29-43"
+        - "packages/cloud/src/logger.ts"
+    children:
+    - id: '1101'
+      type: function_point
+      name: 请求级日志器注入
+      description: 中间件为每个请求构建带 requestId 基础字段的 Logger 并挂入 Hono 上下文。
+      input: HTTP 请求（含可选 X-Request-ID 头）
+      process: 无 ID 则 crypto.randomUUID() 生成；c.set('logger'/'requestId') 并回写响应头
+      output: 请求级 Logger 与 X-Request-ID 响应头
+    - id: '1102'
+      type: function_point
+      name: 访问日志落盘
+      description: 请求完成后记录 method/path/status/durationMs 一条 JSON 行。
+      spec: 日志级别取自请求 env 的 LOG_LEVEL（Workers 为 wrangler vars，Node 为 process.env 注入），中间件不分支运行时
+      input: 响应完成事件
+      process: logger.info('request completed', {...})
+      output: 结构化访问日志（Workers Logs 自动索引）
+  - id: '12'
+    type: function
+    name: 保障数据库就绪
+    description: 每请求前确保 DDL/种子就绪；D1 宕机冷启动时返回显式 503 DB_UNAVAILABLE 而非裸 500（决策 CLOUD-A2）。
+    depends_on: []
+    node_context:
+      keywords: ["db_init", "ddl", "seed", "db_unavailable", "cold_start"]
+      code_mapping:
+        - "packages/cloud/src/index.ts:45-56"
+        - "packages/cloud/src/db/schema.ts:10-52"
+        - "packages/cloud/src/db/seed.ts"
+    children:
+    - id: '1201'
+      type: function_point
+      name: 冷启动建表与种子
+      description: 幂等执行 CREATE TABLE/INDEX/ALTER 并 seedIfEmpty；initPromise 按 isolate 记忆化，失败清空允许重试。
+      spec: D1 调用计入 Workers 50 subrequest 预算，故每 isolate 仅跑一次（~21 条 DDL）
+      input: c.env.DB
+      process: ensureDatabaseInitialized → initializeDatabase + seedIfEmpty
+      output: 就绪的 schema 与内置模板种子
+    - id: '1202'
+      type: function_point
+      name: D1 宕机显式降级
+      description: 初始化抛错时记录日志并返回 503 {error:{code:'DB_UNAVAILABLE'}}；core 侧已有 5xx 退避重试消费该语义。
+      constraint: 管理面不做数据降级，只做显式错误语义
+      input: ensureDatabaseInitialized 抛错
+      process: 捕获 → logger.error → c.json(..., 503)
+      output: HTTP 503 DB_UNAVAILABLE
+  - id: '13'
+    type: function
+    name: 统一错误出口
+    description: PluginError（引擎校验/渲染）映射 400 保留 code；其余异常记日志后返回 500 INTERNAL_ERROR（含 err.message，不含堆栈）；未匹配路由返回 404 NOT_FOUND。
+    depends_on: ["11"]
+    node_context:
+      keywords: ["error_envelope", "plugin_error", "on_error", "not_found"]
+      code_mapping:
+        - "packages/cloud/src/index.ts:81-98"
+        - "packages/cloud/src/engine/errors.ts"
+    children:
+    - id: '1301'
+      type: function_constraint
+      name: 错误信封统一形状
+      description: 所有错误均为 {error:{code,message}}；500 直通 err.message 是面向管理员的显式取舍，堆栈永不返回。
+  - id: '14'
+    type: function
+    name: 暴露健康检查
+    description: GET /health 免认证返回 {status:'ok',service:'chorus-cloud'}，供探活与 core 连通性检查。
+    depends_on: []
+    node_context:
+      keywords: ["health", "liveness"]
+      code_mapping:
+        - "packages/cloud/src/index.ts:58-60"
+
+- id: '2'
+  type: directory
+  name: 认证与账户域
+  description: 静态 AUTH_TOKEN 换发 JWT、令牌轮换与吊销、请求鉴权、审计日志与终端用户账户管理。
+  children:
+  - id: '21'
+    type: function
+    name: 换发管理令牌
+    description: POST /api/auth/login 以共享 AUTH_TOKEN 换取 24h HS256 JWT，并 best-effort 登记吊销记录（tokens 表）。
+    depends_on: []
+    node_context:
+      keywords: ["login", "jwt", "hs256", "token_issuance"]
+      code_mapping:
+        - "packages/cloud/src/routes/auth.ts:13-45"
+        - "packages/cloud/src/auth/jwt.ts"
+    children:
+    - id: '2101'
+      type: function_point
+      name: 登录失败审计
+      description: 失败登录留 warn 日志（含 CF-Connecting-IP/X-Forwarded-For），作为安全信号可回查。
+      input: 错误 token 或缺失 token
+      process: logger.warn('admin login failed', {ip})
+      output: HTTP 401 AUTH_INVALID_CREDENTIALS
+    - id: '2102'
+      type: function_point
+      name: 吊销登记降级
+      description: tokens 表插入失败不阻断签发（best-effort）——签名仍有效，仅失去吊销跟踪。
+      constraint: token_hash 以 SHA-256 存储，不落明文 JWT
+      input: signJWT 产物
+      process: hashToken → INSERT tokens（catch 吞错）
+      output: JWT + 登记行
+  - id: '22'
+    type: function
+    name: 轮换与吊销令牌
+    description: refresh 以旧换新并吊销旧 jti；logout 吊销当前 jti；删除用户时联动吊销其全部 user 型令牌。
+    depends_on: ["21", "23"]
+    node_context:
+      keywords: ["token_refresh", "revocation", "logout"]
+      code_mapping:
+        - "packages/cloud/src/routes/auth.ts:52-85"
+        - "packages/cloud/src/routes/users.ts:109-125"
+    children:
+    - id: '2201'
+      type: function_constraint
+      name: 吊销检查 fail-open
+      description: D1 宕机期间对签名合法但查不到吊销记录的 token 放行（仅 revoked=1 显式拒绝）；风险窗口由 24h TTL 兜底，属显式取舍而非疏漏。
+  - id: '23'
+    type: function
+    name: 校验管理请求身份
+    description: adminAuth 中间件校验 Bearer JWT 签名与过期，再查 tokens 表吊销状态，注入 actor/tokenType/jti 上下文。
+    depends_on: []
+    node_context:
+      keywords: ["auth_middleware", "bearer", "revocation_check"]
+      code_mapping:
+        - "packages/cloud/src/auth/middleware.ts:28-64"
+  - id: '24'
+    type: function
+    name: 记录与查询审计日志
+    description: 关键管理操作（登录/登出/建删用户/签发令牌）写 audit_logs；GET /api/auth/audit-logs 支持分页与 resource/actor 过滤。
+    depends_on: ["23"]
+    node_context:
+      keywords: ["audit_log", "compliance"]
+      code_mapping:
+        - "packages/cloud/src/services/audit.ts"
+        - "packages/cloud/src/routes/auth.ts:92-102"
+    children:
+    - id: '2401'
+      type: function_spec
+      name: 审计尽力而为
+      description: 审计写入失败吞错不阻断业务请求；查询 limit 上限 200。
+  - id: '25'
+    type: function
+    name: 管理终端用户账户
+    description: users 表 CRUD 与为用户签发 30d user 型 JWT，给终端用户独立拉取入口。
+    depends_on: ["23"]
+    node_context:
+      keywords: ["user_crud", "user_token", "subscription_url"]
+      code_mapping:
+        - "packages/cloud/src/routes/users.ts"
+    children:
+    - id: '2501'
+      type: function_point
+      name: 删除联动吊销
+      description: 删除用户前先 UPDATE tokens SET revoked=1 WHERE subject=id AND type='user'。
+      input: DELETE /api/users/:id
+      process: 吊销 + 删除行 + 审计
+      output: 200 {success:true}
+
+- id: '3'
+  type: directory
+  name: 模板与协议域
+  description: protocol/overall-server/overall-client/overall-docker 四类统一模板的 CRUD、内置模板预置、sing-box 版本目录聚合与兼容范围声明。
+  children:
+  - id: '31'
+    type: function
+    name: 管理协议模板
+    description: protocol 类模板（server/client 双模板 + 参数定义）CRUD；写路径校验 singboxCompat 范围；删除前查实例引用。
+    depends_on: ["35"]
+    node_context:
+      keywords: ["protocol_template", "crud", "proto_in_use"]
+      code_mapping:
+        - "packages/cloud/src/routes/protocols.ts"
+    children:
+    - id: '3101'
+      type: function_point
+      name: 删除引用检查
+      description: 被 protocol_instances 引用的协议删除会撞 FK 原始错误，先查引用返回明确 409 PROTO_IN_USE。
+      input: DELETE /api/protocols/:id
+      process: SELECT node_id FROM protocol_instances WHERE protocol_id=? LIMIT 5
+      output: 409 PROTO_IN_USE（附节点列表）或删除成功
+    - id: '3102'
+      type: function_spec
+      name: 写后立即失效模板缓存
+      description: 模板增删改均调用 invalidateTemplateCache，渲染端无需等 30s TTL（CLOUD-P4）。
+  - id: '32'
+    type: function
+    name: 管理 overall 模板
+    description: overall-server/overall-client/overall-docker 三类整体模板 CRUD；接受 server/client/docker 短名映射；JSON 字段合法性校验；删除前查订阅绑定。
+    depends_on: ["35"]
+    node_context:
+      keywords: ["overall_template", "category_mapping", "tmpl_in_use"]
+      code_mapping:
+        - "packages/cloud/src/routes/templates.ts:8-69"
+        - "packages/cloud/src/routes/templates.ts:107-224"
+    children:
+    - id: '3201'
+      type: function_point
+      name: 列表版本兼容过滤
+      description: GET /api/templates?singbox_version= 服务端过滤不兼容模板（纵深防御第 1 层），filtered_count 提示被隐藏数量。
+      spec: compat 为 NULL 视为兼容任意版本
+      input: singbox_version 查询参数
+      process: isCompatSatisfied 逐行过滤
+      output: {templates, filtered_count}
+  - id: '33'
+    type: function
+    name: 聚合 sing-box 版本目录
+    description: GET /api/singbox-versions 汇总所有 overall-docker 模板 singbox_version param 的 enum，去重按 semver 降序；panel 两处版本下拉共用。
+    depends_on: ["32"]
+    node_context:
+      keywords: ["version_catalog", "singbox_versions", "enum_aggregation"]
+      code_mapping:
+        - "packages/cloud/src/routes/templates.ts:71-105"
+  - id: '34'
+    type: function
+    name: 预置内置模板
+    description: POST /api/admin/seed 以配置文件校验为前置，幂等 upsert 5 个内置模板（hysteria2/vless-reality-vision/server-default/client-default/docker-default）；首启亦由 seedIfEmpty 自动播种。
+    depends_on: ["35"]
+    node_context:
+      keywords: ["seed", "builtin_templates", "idempotent_upsert"]
+      code_mapping:
+        - "packages/cloud/src/routes/admin.ts:35-174"
+        - "packages/cloud/src/db/seed.ts"
+        - "packages/cloud/src/templates/"
+  - id: '35'
+    type: function
+    name: 声明模板兼容范围
+    description: 模板可声明 singbox_compat semver 范围（NULL=任意版本）；写路径以 SBX_BAD_RANGE 拦截非法范围，声明层再经 zod 校验。
+    depends_on: ["47"]
+    node_context:
+      keywords: ["singbox_compat", "compat_range", "sbx_bad_range"]
+      code_mapping:
+        - "packages/cloud/src/engine/types.ts:32-42"
+        - "packages/cloud/src/routes/protocols.ts:52-54"
+        - "packages/cloud/src/routes/templates.ts:126-128"
+
+- id: '4'
+  type: directory
+  name: 配置渲染引擎域
+  description: 纯逻辑零 IO 的渲染核心：参数解析校验、占位符插值、随机值生成器、协议/整体/docker 渲染、semver 兼容判定与模板缓存。
+  children:
+  - id: '41'
+    type: function
+    name: 解析校验模板参数
+    description: resolveAndValidate 按「用户值 > default > generator > required 报错」次序归并参数；select 强制 enum；number 字符串宽式转型。
+    depends_on: []
+    node_context:
+      keywords: ["param_resolution", "enum_check", "type_coercion"]
+      code_mapping:
+        - "packages/cloud/src/engine/validator.ts:21-57"
+    children:
+    - id: '4101'
+      type: function_constraint
+      name: default 与 generator 互斥
+      description: ParamDef 声明层强制：default/generator 二选一，或 required:true，否则 zod 拒绝。
+  - id: '42'
+    type: function
+    name: 插值占位符表达式
+    description: 模板内 {{ params.X }} 与 {{ gen.NAME:ARGS }} 占位符求值；整体占位返回原生类型值，内嵌占位字符串化；未解析的 splice 关键字告警降级为空串。
+    depends_on: ["43"]
+    node_context:
+      keywords: ["interpolation", "placeholder", "params_path", "generator_expr"]
+      code_mapping:
+        - "packages/cloud/src/engine/interpolator.ts"
+  - id: '43'
+    type: function
+    name: 生成随机凭据值
+    description: 内置 7 个生成器（uuid/hex/x25519_keypair/random_port/random_port_high/now_iso/random_tag），运行时可经 registerGenerator 扩展。
+    depends_on: []
+    node_context:
+      keywords: ["generators", "uuid", "x25519", "random_port"]
+      code_mapping:
+        - "packages/cloud/src/engine/generators/"
+  - id: '44'
+    type: function
+    name: 拼装协议实例配置
+    description: 按协议模板渲染 server/client 双侧配置：参数解析后对 server_template/client_template 做占位符替换。
+    depends_on: ["41", "42", "48"]
+    node_context:
+      keywords: ["protocol_render", "server_client_config"]
+      code_mapping:
+        - "packages/cloud/src/engine/registry.ts:243-259"
+  - id: '45'
+    type: function
+    name: 拼装整体配置
+    description: server 侧拼接 {{ protocols }}，client 侧追加 {{ proxy_tags }}；先数组展开再参数替换；docker 模板走独立渲染入口。
+    depends_on: ["41", "42", "44", "48"]
+    node_context:
+      keywords: ["overall_render", "protocols_splice", "proxy_tags"]
+      code_mapping:
+        - "packages/cloud/src/engine/registry.ts:265-311"
+    children:
+    - id: '4501'
+      type: function_constraint
+      name: 入口脚本与 YAML 分离
+      description: renderDocker 返回纯 compose YAML；entry.sh 单独返回且永不追加进 YAML（compose 文件直喂 docker compose）。
+  - id: '46'
+    type: function
+    name: 渲染 docker 编排产物
+    description: 将渲染后的 compose 对象以手写 YAML 序列化（含引号转义规则），展开 <GENERATED_ENV>/<GENERATED_VOLUMES> 占位，并回读 sing-box 服务镜像引用。
+    depends_on: ["41", "42", "48"]
+    node_context:
+      keywords: ["docker_compose", "yaml_render", "singbox_image"]
+      code_mapping:
+        - "packages/cloud/src/engine/docker_renderer.ts"
+        - "packages/cloud/src/engine/registry.ts:313-342"
+  - id: '47'
+    type: function
+    name: 判定 sing-box 版本兼容
+    description: semver 匹配逻辑全仓库仅存于此（panel 只消费结果）；NULL/''/'*' 视为任意版本；读到脏 range 放行不过滤。
+    depends_on: []
+    node_context:
+      keywords: ["semver", "compat_check", "single_source"]
+      code_mapping:
+        - "packages/cloud/src/engine/compat.ts:3-37"
+    children:
+    - id: '4701'
+      type: function_constraint
+      name: 版本格式 docker-tag 安全
+      description: SINGBOX_VERSION_RE 拒绝 +build 元数据（docker tag 非法字符，同时收窄镜像 tag 注入面）。
+  - id: '48'
+    type: function
+    name: 缓存模板定义
+    description: isolate 级共享模板缓存（Map + 30s TTL）+ 惰性 JSON 解析缓存；模板写路径立即失效；测试提供 reset 钩子。
+    depends_on: []
+    node_context:
+      keywords: ["template_cache", "ttl", "cache_invalidation", "isolate_shared"]
+      code_mapping:
+        - "packages/cloud/src/engine/registry.ts:104-155"
+        - "packages/cloud/src/engine/registry.ts:172-187"
+
+- id: '5'
+  type: directory
+  name: 节点与实例编排域
+  description: 节点注册/心跳/身份迁移/档案管理、协议实例快照管理、tag 全局唯一校验与节点部署物产出。
+  children:
+  - id: '51'
+    type: function
+    name: 登记节点心跳
+    description: POST /api/nodes/register 以 fingerprint 幂等登记/续跳；两语句完成（INSERT OR IGNORE RETURNING 区分 201/200）；可选顺路上报 sing-box 版本。
+    depends_on: ["47"]
+    node_context:
+      keywords: ["node_register", "heartbeat", "fingerprint"]
+      code_mapping:
+        - "packages/cloud/src/routes/nodes.ts:44-78"
+  - id: '52'
+    type: function
+    name: 迁移节点身份
+    description: POST /api/nodes/rebind 把节点行与全部 client_configs 从旧指纹原子迁到新指纹（重装恢复）；目标已有配置则拒绝；迁移时清空订阅交付缓存。
+    depends_on: ["51", "71"]
+    node_context:
+      keywords: ["rebind", "fingerprint_migration", "atomic_batch"]
+      code_mapping:
+        - "packages/cloud/src/routes/nodes.ts:90-143"
+    children:
+    - id: '5201'
+      type: function_constraint
+      name: 身份迁移原子性
+      description: DB.batch 保证配置迁移与节点行变更同生共死；无目标行则改写指纹，有则保留新行删旧行。
+  - id: '53'
+    type: function
+    name: 管理节点档案
+    description: 节点 CRUD；删除时原子级联清理其协议实例（防止悬挂实例继续被订阅交付）。
+    depends_on: ["54"]
+    node_context:
+      keywords: ["node_crud", "cascade_delete"]
+      code_mapping:
+        - "packages/cloud/src/routes/nodes.ts:145-223"
+  - id: '54'
+    type: function
+    name: 管理协议实例
+    description: 实例创建/更新即用当前模板渲染并快照 server_config/client_config；params.tag 镜像进索引列；tag 创建后不可变；status 枚举约束 active/inactive。
+    depends_on: ["44", "48", "53"]
+    node_context:
+      keywords: ["protocol_instance", "render_snapshot", "tag_immutable"]
+      code_mapping:
+        - "packages/cloud/src/routes/protocol-instances.ts:24-146"
+    children:
+    - id: '5401'
+      type: function_spec
+      name: tag 不可变约束
+      description: 更新时 params.tag 必须与原值一致（含缺失状态），否则 400 TAG_IMMUTABLE——tag 是订阅合并配置的标识。
+  - id: '55'
+    type: function
+    name: 重渲染存量实例
+    description: POST /api/protocol-instances/rerender 按当前模板定义批量重渲染快照（CLOUD-C1 维护端点）；先强刷缓存；单实例失败不阻断批次。
+    depends_on: ["48", "54"]
+    node_context:
+      keywords: ["rerender", "maintenance", "batch_render"]
+      code_mapping:
+        - "packages/cloud/src/routes/protocol-instances.ts:153-204"
+  - id: '56'
+    type: function
+    name: 校验标签全局唯一
+    description: GET /api/tags/check 两次索引查询校验 tag 在 protocol_instances 与 client_configs 间全局唯一（合并配置不可出现重复标识）。
+    depends_on: ["54", "61"]
+    node_context:
+      keywords: ["tag_uniqueness", "index_lookup"]
+      code_mapping:
+        - "packages/cloud/src/routes/tags.ts:16-40"
+  - id: '57'
+    type: function
+    name: 产出节点部署物
+    description: POST /api/deploy/:nodeId 渲染节点完整部署物（合并 server 配置 + compose YAML + 注入配置的 entry.sh）并直返响应，不做云端归档。
+    depends_on: ["44", "45", "46", "53", "54"]
+    node_context:
+      keywords: ["deploy_artifacts", "entry_script", "compose"]
+      code_mapping:
+        - "packages/cloud/src/routes/deploy.ts"
+    children:
+    - id: '5701'
+      type: function_constraint
+      name: 不做云端部署物归档
+      description: 部署结果仅存在于响应中；历史 KV 归档键与 clients 域键位漂移并泄漏孤儿记录，已移除。
+
+- id: '6'
+  type: directory
+  name: 客户端配置同步域
+  description: panel 推送的客户端配置在云端以「节点指纹+配置名」命名空间存储、查询与拉取，含端口/tag 冲突防护。
+  children:
+  - id: '61'
+    type: function
+    name: 同步客户端配置
+    description: PUT /api/clients/:fingerprint/:name 幂等 upsert；同节点端口冲突与全局 tag 冲突前置检查返回精确 409；并发写由 partial UNIQUE 索引兜底。
+    depends_on: []
+    node_context:
+      keywords: ["client_sync", "upsert", "port_conflict", "tag_conflict"]
+      code_mapping:
+        - "packages/cloud/src/routes/clients.ts:157-249"
+        - "packages/cloud/src/db/schema.ts:208"
+    children:
+    - id: '6101'
+      type: function_point
+      name: 配置特征提取
+      description: 从 config 提取 tag 与有效端口（server_port/listen_port，0/缺失→null）落镜像列，供拉取过滤与冲突检查。
+      input: config JSON body
+      process: extractTag/extractPort
+      output: tag/port 镜像列值
+  - id: '62'
+    type: function
+    name: 查询拉取客户端配置
+    description: 全量元数据列表（仅索引列）、按指纹全量拉取（含配置体）、单条查询；区分「节点不存在 404」与「节点无配置 空列表」；行数上限 500 保护响应体。
+    depends_on: ["61"]
+    node_context:
+      keywords: ["client_pull", "node_list", "storage_unavailable"]
+      code_mapping:
+        - "packages/cloud/src/routes/clients.ts:24-155"
+    children:
+    - id: '6201'
+      type: function_spec
+      name: 查询失败显式 503
+      description: D1 查询失败返回 STORAGE_UNAVAILABLE 503 而非空列表——空列表会诱发 panel 侧全量重传。
+
+- id: '7'
+  type: directory
+  name: 订阅交付域
+  description: 面向终端订阅消费端的配置交付（GET /s/:path）与面向管理员的订阅 CRUD；交付分双型——singbox（JSON 配置，绑定 sing-box 版本强校验）与 url（分享链接列表，无版本概念）；三级降级在本域收口。
+  children:
+  - id: '71'
+    type: function
+    name: 交付订阅配置
+    description: 以 path 定位订阅、token 明文比对、限流后按订阅 type 分流交付：singbox 型按绑定版本过滤不兼容实例后渲染整体配置直返 JSON 本体；url 型把实例 outbound 转成分享链接以 text/plain 返回（非信封）。
+    depends_on: ["45", "47", "48", "61", "74", "75", "83"]
+    node_context:
+      keywords: ["subscription_delivery", "token_check", "raw_config", "share_urls"]
+      code_mapping:
+        - "packages/cloud/src/routes/subscriptions.ts:152-327"
+    children:
+    - id: '7101'
+      type: function_point
+      name: 订阅令牌校验
+      description: 缺 token 401、path 不存在 404、token 不匹配 401、订阅停用 403（并联动删除交付缓存防 stale 外泄）。
+      input: GET /s/:path?token=
+      process: 查 subscriptions 行 → token 比对 → active 检查
+      output: 401/404/403 或继续交付
+    - id: '7102'
+      type: function_point
+      name: 实例来源二级回退
+      description: 先读 protocol_instances（active），为空回退 client_configs（deployed+enabled，isolate 缓存）；均空 500 INSTANCES_MISSING。
+      input: 交付请求
+      process: 两级 D1 查询 + 内存缓存
+      output: LoadedConfig 列表
+    - id: '7103'
+      type: function_point
+      name: 无模板简单合并兜底
+      description: 订阅未绑定 overall 模板时直接合并 outbounds（compatible + direct），不渲染整体模板。
+      input: overallTemplateId 为 null
+      process: 手工拼装 {version,outbounds}
+      output: 最小可用客户端配置
+    - id: '7104'
+      type: function_constraint
+      name: 交付响应为配置本体
+      description: 消费端（sing-box 等）期望配置文档本身；被跳过实例数经 X-Sbx-Skipped-Instances 头与日志披露，不进 body。
+    - id: '7105'
+      type: function_point
+      name: 分享链接交付（url 型）
+      description: url 型订阅逐实例把客户端 outbound 经 outboundToShareUrl 转成标准 URI（vless:// hysteria2:// 等），换行拼接后 text/plain; charset=utf-8 交付；转不出的实例跳过（与 singbox 型「坏实例不挂掉订阅」同语义），全部转不出才 500 SHARE_URL_NONE。
+      input: LoadedConfig 列表（url 型订阅）
+      process: outboundToShareUrl 逐个转换 → filter(Boolean) → join('\n') → writeDeliveryCache(text)
+      output: text/plain URI 列表；0 条可转 → 500 SHARE_URL_NONE
+      spec: url 型不参与 sing-box 版本 compat 过滤与 overall 渲染（URI 消费方是 V2rayN/NekoBox 等，非 sing-box）
+      code_mapping:
+        - "packages/cloud/src/routes/subscriptions.ts:259-278"
+        - "packages/cloud/src/engine/share-urls.ts"
+  - id: '75'
+    type: function
+    name: 转换分享链接
+    description: 纯函数零 IO 的 outbound → URI 转换单点（engine/share-urls.ts）：支持 vless（含 REALITY/utls/flow/ws/grpc/http 传输）、hysteria2（含 obfs）、trojan、shadowsocks（SIP002）、vmess（v2rayN base64 JSON）；缺 server/port 或不识别的协议返回 null 交调用方跳过。
+    depends_on: []
+    node_context:
+      keywords: ["share_url", "uri_scheme", "vless_reality", "hysteria2_uri", "sip002"]
+      code_mapping:
+        - "packages/cloud/src/engine/share-urls.ts"
+    children:
+    - id: '7501'
+      type: function_spec
+      name: URI 格式钉在双规范
+      description: vless 参数遵循 Xray-core discussion 716（security/sni/fp/pbk/sid/flow/type/host/path/serviceName/encryption），hysteria2 遵循官方 URI scheme（auth@host:port/?sni&insecure&obfs&obfs-password）；IPv6 host 加方括号；query 值与 #fragment 一律 percent-encode。
+    - id: '7502'
+      type: function_constraint
+      name: 转换失败不阻断交付
+      description: 无法识别/缺字段的 outbound 返回 null——单个坏实例不挂掉整个订阅；null 是正常分支不是错误（fail-loudly 只发生在全部转不出时）。
+  - id: '72'
+    type: function
+    name: 降级交付订阅
+    description: D1 故障时按「isolate 内存缓存(300s) → sub_delivery_cache stale(24h, token 哈希+active 校验) → 503 DB_UNAVAILABLE」三级兜底（CLOUD-A2）。
+    depends_on: ["71"]
+    node_context:
+      keywords: ["degradation", "stale_cache", "token_hash", "sub_delivery_cache"]
+      code_mapping:
+        - "packages/cloud/src/routes/subscriptions.ts:15-101"
+        - "packages/cloud/src/routes/subscriptions.ts:169-176"
+    children:
+    - id: '7201'
+      type: function_point
+      name: 交付缓存写入节流
+      description: 成功交付后 best-effort 写缓存，≤1 写/5min/path/isolate，并惰性清除 24h 前旧条目；写失败吞错绝不影响成功交付。
+      spec: 仅存 SHA-256 token 哈希——轮换后的 token 在 stale 路径即被拒；singbox 型存渲染 JSON，url 型存标记对象 {__format:'share-urls', text}（config 列为 TEXT，靠标记区分两种交付格式，stale 读取时按标记回 JSON 或纯文本）
+      input: 渲染成功的 clientConfig 或分享链接文本
+      process: DB.batch(UPSERT + 24h 清理)
+      output: sub_delivery_cache 行
+    - id: '7202'
+      type: function_point
+      name: stale 交付防护
+      description: 'stale 命中需同时满足：条目存在、config 非空、active=1、token 哈希匹配；响应带 X-Subscription-Cache: stale 头。'
+      input: D1 查询抛错
+      process: serveStaleDelivery
+      output: stale 配置或 null（null → 503）
+  - id: '73'
+    type: function
+    name: 管理订阅
+    description: 订阅 CRUD：path 保留字与小写规范约束、唯一冲突精确 409、交付 type 创建时二选一（singbox/url，创建后不可变）、变更后联动失效交付缓存、删除时同步清缓存。
+    depends_on: ["32", "35"]
+    node_context:
+      keywords: ["subscription_crud", "path_reserved", "cache_invalidation", "subscription_type"]
+      code_mapping:
+        - "packages/cloud/src/routes/subscriptions.ts:366-536"
+    children:
+    - id: '7301'
+      type: function_point
+      name: 创建更新预校验
+      description: 绑定模板存在性 + 版本 compat 以「更新后的最终值」在写路径预校验（设计 §13.7），不让管理员创建注定交付 400/500 的订阅。
+      input: create/update body（模板 id + singboxVersion）
+      process: validateOverallCompat
+      output: 404 TMPL_NOT_FOUND / 400 SBX_VERSION_INCOMPATIBLE 或放行
+    - id: '7302'
+      type: function_point
+      name: 交付缓存失效联动
+      description: 版本/模板/参数/token 变更或停用/删除时删除对应 path 的 sub_delivery_cache 行，stale 路径不得再端旧渲染结果。
+      constraint: 修复 v1 隐性 bug——不同 version 曾共享同一缓存行
+      input: PUT/DELETE /api/subscriptions、403 停用路径
+      process: DELETE FROM sub_delivery_cache WHERE path=?
+      output: 缓存行清除
+    - id: '7303'
+      type: function_constraint
+      name: 交付 type 双型语义
+      description: POST 时 type 二选一（默认 singbox）：singbox 型必填 singboxVersion（缺 400）且禁传 url 语义；url 型禁传 singboxVersion（400），singbox_version 落 ''、overall_template_id 落 NULL。PUT 换 type → 400 SUB_TYPE_IMMUTABLE（交付语义 JSON vs URI 列表完全不同，同「协议 tag 不可变」约定）；对 url 型更新版本/模板字段 → 400 SUB_FIELD_NOT_APPLICABLE。
+      input: create/update body 的 type 与版本/模板字段
+      process: createSubSchema superRefine + PUT handler 前置检查
+      output: 400 SUB_TYPE_IMMUTABLE / SUB_FIELD_NOT_APPLICABLE 或放行
+  - id: '74'
+    type: function
+    name: 过滤不兼容订阅实例
+    description: 交付端以订阅绑定版本强制校验（仅 singbox 型；url 型无版本概念不参与）：overall 模板不匹配 400 明确报错；协议不兼容的实例排除而非报错并计数；全部被排除才 400。
+    depends_on: ["47", "48"]
+    node_context:
+      keywords: ["compat_filter", "skip_instances", "final_defense"]
+      code_mapping:
+        - "packages/cloud/src/routes/subscriptions.ts:244-291"
+    children:
+    - id: '7401'
+      type: function_spec
+      name: 单坏配置不挂整个订阅
+      description: 实例级不兼容执行排除（记入 skipped 列表），仅 overall 模板级不匹配或全部排除时返回 400——交付端是版本闭环的最终防线。
+
+- id: '8'
+  type: directory
+  name: 双运行时适配域
+  description: Workers 与 Node/VPS 共享同一 Hono app，运行时差异收敛为绑定注入：SQLite↔D1 适配、内存限流器、Node 入口装配与后台任务派发。
+  children:
+  - id: '81'
+    type: function
+    name: 适配 SQLite 为 D1 接口
+    description: SqliteD1 实现应用实际使用的 D1 表面（prepare→bind/first/all/run/raw + batch 事务）；镜像 D1 的绑定值拒绝规则（boolean/undefined）。
+    depends_on: []
+    node_context:
+      keywords: ["sqlite_adapter", "d1_surface", "batch_transaction"]
+      code_mapping:
+        - "packages/cloud/src/node/d1-sqlite.ts"
+    children:
+    - id: '8101'
+      type: function_spec
+      name: 适配器契约由 CI 钉住
+      description: tests/node/api.spec.ts 以完整中间件链跑同一 app 于 SQLite 适配器上——路由新增绑定方法而适配器缺失时 CI 失败而非生产事故。
+  - id: '82'
+    type: function
+    name: 装配 Node 运行时环境
+    description: Node/VPS 入口注入 SqliteD1/密钥/日志级别组成假 Env，启动即建库快速失败，支持 SIGINT/SIGTERM 优雅停机。
+    depends_on: ["81", "12"]
+    node_context:
+      keywords: ["node_entry", "secrets_bootstrap", "graceful_shutdown"]
+      code_mapping:
+        - "packages/cloud/src/node/entry.ts:87-154"
+    children:
+    - id: '8201'
+      type: function_point
+      name: 密钥自动生成持久化
+      description: env 未提供 AUTH_TOKEN/JWT_SECRET 时生成一次并写入数据目录 secrets.json（0600）；重启/重建容器后沿用。
+      constraint: env 变量优先于持久化文件
+      input: process.env
+      process: loadOrCreateSecrets
+      output: Secrets 注入 env
+  - id: '83'
+    type: function
+    name: 限流订阅投递
+    description: 订阅交付按订阅 id 限流（Workers Rate Limiting 绑定或 Node 内存滑窗）；绑定可选，缺省不限流（免费版友好）。
+    depends_on: []
+    node_context:
+      keywords: ["rate_limit", "sliding_window", "optional_binding"]
+      code_mapping:
+        - "packages/cloud/src/node/rate-limiter.ts"
+        - "packages/cloud/src/routes/subscriptions.ts:197-206"
+        - "packages/cloud/src/env.d.ts:3-16"
+    children:
+    - id: '8301'
+      type: function_spec
+      name: 限流器缺失静默放行
+      description: c.env.SUBSCRIPTION_RATE_LIMITER?.limit + try/catch——未绑定/抛错均继续交付；超限返回 429 RATE_LIMITED。
+  - id: '84'
+    type: function
+    name: 派发后台任务
+    description: fireAndForget 统一 Workers waitUntil 与 Node 分离 Promise 两种机制，保持即发即忘契约（如停用订阅时清缓存）。
+    depends_on: []
+    node_context:
+      keywords: ["fire_and_forget", "wait_until", "runtime_seam"]
+      code_mapping:
+        - "packages/cloud/src/services/fire-and-forget.ts"
+        - "packages/cloud/src/routes/subscriptions.ts:188-195"
+
+# ── 全局功能树映射（../../architecture_views/function_tree.yml, base_commit 5ab6e0b）──
+# 1 接入与请求治理域 → 902 治理云端请求接入
+# 2 认证与账户域 → 901 认证管理令牌 / 903 管理审计日志 / 904 管理终端用户账户
+# 3 模板与协议域 → 401 管理协议模板（M4）
+# 4 配置渲染引擎域 → 402 渲染配置制品（M4）/ 403 判定 sing-box 版本兼容
+# 5 节点与实例编排域 → 601 管理节点身份（M7）/ 602 登记节点心跳与指标 / 102 预检配置资源冲突（M6）
+# 6 客户端配置同步域 → 201 执行双向同步（M2）/ 103 管理远端配置镜像
+# 7 订阅交付域 → 501 管理订阅（M5）/ 502 交付订阅配置
+# 8 双运行时适配域 → 1003 适配双运行时

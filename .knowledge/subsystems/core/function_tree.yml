@@ -1,0 +1,885 @@
+# ════════════════════════════════════════════════════════════════════════════
+# SingChorus · core 模块功能树（@chorus/core, packages/core/）
+# base_commit: 5ab6e0b5439b72f3af60ca178147e57dc3fc31d9
+# 结构遵循 .opencode/skills/aet-project-analysis2/assets/modules/function_tree.yml (R1–R7)
+# ════════════════════════════════════════════════════════════════════════════
+
+- id: '10'
+  type: directory
+  name: 用例编排域
+  description: ChorusCore 门面对宿主（panel/ctl）暴露的节点管理用例：应用配置、配置生成、初始化判定与运行指标。
+  children:
+  - id: '101'
+    type: function
+    name: 管理应用配置
+    description: 读取/局部更新应用配置（cloud 地址、token、sing-box 版本 pin 等），局部字段合并后整体落盘。
+    depends_on: []
+    node_context:
+      keywords: ["app_config", "settings", "facade"]
+      code_mapping:
+        - "packages/core/src/core.ts:59-68"
+        - "packages/core/src/schemas/config.ts:63-75"
+    children:
+    - id: '10101'
+      type: function_constraint
+      name: 局部更新合并约束
+      description: updateAppConfig 以当前持久化值为底、Partial 覆盖合并后整体写回，不丢未提及字段。
+  - id: '102'
+    type: function
+    name: 生成协议配置
+    description: 经云端渲染协议的 server/client 配置；tag 缺省时按 `<node名>-<协议>-<随机6位>` 本地组合，显式 tag 原样透传。
+    depends_on: []
+    node_context:
+      keywords: ["render", "tag", "protocol"]
+      code_mapping:
+        - "packages/core/src/core.ts:130-135"
+        - "packages/core/src/tag.ts:25-33"
+    children:
+    - id: '10201'
+      type: function_point
+      name: 自动组合节点标签
+      description: 用户未提供 tag 时以节点名+协议短名+随机后缀生成可辨识标签。
+      input: 协议类型与参数（无 tag）
+      process: slugify(节点名)-协议短名(hy2 映射)-6 位随机字母数字
+      output: 带 tag 的渲染请求
+  - id: '103'
+    type: function
+    name: 生成并落库配置
+    description: 渲染成功后 upsert 本地配置条目，可选立即停用，返回最终条目。
+    depends_on: ["102"]
+    node_context:
+      keywords: ["generate_and_add", "upsert"]
+      code_mapping:
+        - "packages/core/src/core.ts:137-142"
+  - id: '104'
+    type: function
+    name: 判定节点初始化状态
+    description: 以 cloud_token 与 node_name 均非空判定节点是否完成初始化。
+    depends_on: []
+    node_context:
+      keywords: ["initialized", "onboarding"]
+      code_mapping:
+        - "packages/core/src/core.ts:106-109"
+  - id: '105'
+    type: function
+    name: 汇报运行指标
+    description: 输出配置总数/启用数/未同步数与时间戳的文本指标。
+    depends_on: []
+    node_context:
+      keywords: ["metrics", "observability"]
+      code_mapping:
+        - "packages/core/src/core.ts:111-121"
+
+- id: '20'
+  type: directory
+  name: 配置生命周期域
+  description: ConfigManager 对配置条目的增改删启停、内容指纹、同步状态判定与部署集合标记。
+  children:
+  - id: '201'
+    type: function
+    name: 管理配置新增与更新
+    description: add（重名拒绝）/upsert（重生成覆盖）/update（部分合并），更新时执行端口冲突与标签不可变校验。
+    depends_on: ["202"]
+    node_context:
+      keywords: ["config_crud", "update", "conflict"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:41-111"
+    children:
+    - id: '20101'
+      type: function_point
+      name: 端口冲突校验
+      description: 新增/内容变更时提取生效端口（server listen_port 优先，client server_port 兜底），与本机其他配置冲突即拒绝。
+      input: 候选配置的 server/client 配置
+      process: extractConfigPort 与 listConfigs 中他条目端口比对
+      output: 冲突抛 CFG_PORT_CONFLICT 409
+    - id: '20102'
+      type: function_point
+      name: 标签不可变校验
+      description: params.tag 与 client_config.tag 任一侧（含缺失态）与原值不一致即整体拒绝更新。
+      input: 合并前后的条目
+      process: assertTagUnchanged 逐字段比对
+      output: 违反抛 CFG_TAG_IMMUTABLE 400
+    - id: '20103'
+      type: function_constraint
+      name: 内容真变更才失效状态
+      description: 新旧 content_hash 一致的写入不翻转 synced/deployed，避免键序差异引发冗余重传与订阅下线。
+    - id: '20104'
+      type: function_constraint
+      name: 同名语义二分
+      description: add 重名抛 CFG_DUPLICATE；upsert 面向重生成场景允许覆盖；restore 本地同名优先跳过。
+  - id: '202'
+    type: function
+    name: 计算配置内容指纹
+    description: 对 server/client/params 三段做递归键序无关序列化后拼接取 SHA-256。
+    depends_on: []
+    node_context:
+      keywords: ["content_hash", "stable_stringify"]
+      code_mapping:
+        - "packages/core/src/services/hash.ts:12-26"
+    children:
+    - id: '20201'
+      type: function_spec
+      name: 递归键序无关序列化
+      description: stableStringify 递归排序键，杜绝 replacer 白名单丢深层字段导致嵌套变更漏检（同步误报 synced）。
+  - id: '203'
+    type: function
+    name: 管理配置启停
+    description: enable/disable 翻转 enabled 并置 synced=false 触发重传。
+    depends_on: []
+    node_context:
+      keywords: ["enable", "disable", "toggle"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:165-183"
+    children:
+    - id: '20301'
+      type: function_constraint
+      name: 停用即退出部署集合
+      description: disable 同时置 deployed=false，该条目不再进入部署集合与用户订阅。
+    - id: '20302'
+      type: function_constraint
+      name: 启停触发重传
+      description: enable/disable 均置 synced=false，仅翻 enabled 不改 content_hash，推送条件靠 synced 标志。
+  - id: '204'
+    type: function
+    name: 删除本地配置
+    description: 按名删除配置，不存在抛 CFG_NOT_FOUND。
+    depends_on: []
+    node_context:
+      keywords: ["delete_config"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:160-163"
+  - id: '205'
+    type: function
+    name: 标记部署集合
+    description: 名单制翻转 deployed：名单内条目 deployed=true，其余全部置 false，并置 synced=false 待上报。
+    depends_on: []
+    node_context:
+      keywords: ["deployed_set", "mark_deployed"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:185-199"
+  - id: '206'
+    type: function
+    name: 标记配置已同步
+    description: 上传成功后置 synced=true 并重算 content_hash。
+    depends_on: ["202"]
+    node_context:
+      keywords: ["mark_synced"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:201-207"
+  - id: '207'
+    type: function
+    name: 判定同步状态
+    description: 比对本地条目与云端记录得出 pending_upload/pending_update/synced。
+    depends_on: []
+    node_context:
+      keywords: ["sync_status", "drift"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:209-221"
+    children:
+    - id: '20701'
+      type: function_spec
+      name: 三要素一致判 synced
+      description: 当且仅当 content_hash、enabled、deployed 三者与云端记录一致判 synced；云端无记录判 pending_upload。
+  - id: '208'
+    type: function
+    name: 查询配置与历史
+    description: 单条（不存在抛 404）/全量/启用/未同步列表与按名历史快照查询。
+    depends_on: []
+    node_context:
+      keywords: ["list", "history", "query"]
+      code_mapping:
+        - "packages/core/src/services/config-manager.ts:138-158"
+
+- id: '30'
+  type: directory
+  name: 本地持久化域
+  description: LocalStore 对 ~/.singchorus/data 下配置条目、应用配置、节点指纹与远端配置缓存的原子持久化、自愈与缓存。
+  children:
+  - id: '301'
+    type: function
+    name: 原子持久化配置条目
+    description: saveConfig 先单次 rename 迁移对侧状态文件再原子写内容，同时落历史快照并裁剪。
+    depends_on: []
+    node_context:
+      keywords: ["atomic_write", "history", "enabled_disabled"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:40-45,189-210"
+    children:
+    - id: '30101'
+      type: function_point
+      name: 单次 rename 迁移防双份
+      description: 启停切换先用 POSIX rename 原子覆盖把对侧旧文件迁到目标位置，两步间任一中断不产生 enabled/disabled 双份。
+    - id: '30102'
+      type: function_point
+      name: 历史快照保留窗口
+      description: 每次保存写 .history/<name>/<时间戳>.json，超出 20 份裁剪最旧。
+    - id: '30103'
+      type: function_constraint
+      name: 写操作持锁执行
+      description: saveConfig/deleteConfig/saveAppConfig 等变更全部经 withFileLockSync 串行化，锁超时转译为 busy 错误。
+  - id: '302'
+    type: function
+    name: 自愈损坏配置
+    description: 启动扫描与运行期读取遇损坏 JSON，优先从最新历史快照原子写回；无快照可恢复时改名隔离保留现场。
+    depends_on: ["301"]
+    node_context:
+      keywords: ["self_heal", "quarantine", "corrupt"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:74-85,118-152,216-224,238-241"
+    children:
+    - id: '30201'
+      type: function_spec
+      name: 历史优先恢复规格
+      description: RPO = 最长 20 次变更前；恢复后失效目录缓存；隔离文件带 corrupt-时间戳后缀供人工排查。
+    - id: '30202'
+      type: function_point
+      name: 运行期损坏就地恢复
+      description: loadConfig/listConfigs 读到解析失败文件即触发恢复/隔离，不静默跳过条目。
+  - id: '303'
+    type: function
+    name: 缓存配置列表
+    description: listConfigs 以 enabled/disabled 目录 mtime 为签名做目录级内存缓存，返回浅拷贝防调用方污染。
+    depends_on: ["301"]
+    node_context:
+      keywords: ["cache", "mtime_signature"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:90-105,226-246"
+    children:
+    - id: '30301'
+      type: function_spec
+      name: 目录 mtime 签名失效
+      description: 原子写换 dirent 必然更新目录 mtime，panel/ctl 双进程互写后签名变化、缓存自动失效；本进程写另显式失效。
+  - id: '304'
+    type: function
+    name: 管理应用配置文件
+    description: loadAppConfig/saveAppConfig；顶层文件损坏时改名隔离并回退默认值合并。
+    depends_on: ["301"]
+    node_context:
+      keywords: ["app_config_file", "quarantine"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:74-85,266-276"
+    children:
+    - id: '30401'
+      type: function_point
+      name: 顶层文件损坏隔离
+      description: app_config.json 等无历史可恢复的顶层文件解析失败即改名隔离保留现场，返回 null 由调用方回退默认值。
+  - id: '305'
+    type: function
+    name: 管理节点指纹
+    description: 首次使用生成 32 位随机 hex 指纹持久化；支持环境变量 CHORUS_FINGERPRINT 回收旧身份与显式导入。
+    depends_on: ["301"]
+    node_context:
+      keywords: ["fingerprint", "identity", "reinstall"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:57-61,289-346"
+    children:
+    - id: '30501'
+      type: function_point
+      name: 环境变量回收指纹
+      description: CHORUS_FINGERPRINT 合法时覆写并重持久化，重装机借此找回云端旧身份使配置回同步。
+    - id: '30502'
+      type: function_constraint
+      name: 指纹生成与覆写持锁
+      description: 生成/覆写经 withFileLockSync，防 panel/ctl 双进程同时发现缺失各自生成不同指纹。
+    - id: '30503'
+      type: function_spec
+      name: 指纹字符集规格
+      description: 8-128 位 [A-Za-z0-9_-]，兼顾 URL 与文件存储往返；importFingerprint 违反抛 INVALID_FINGERPRINT 422。
+  - id: '306'
+    type: function
+    name: 管理远端配置缓存
+    description: 其他节点配置的只读本地缓存读写删与列表。
+    depends_on: ["301"]
+    node_context:
+      keywords: ["remote_configs", "read_only"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:348-387"
+    children:
+    - id: '30601'
+      type: function_point
+      name: 哈希键防路径穿越
+      description: 文件名不可信，按 sha256(fingerprint/name) 前 24 位作缓存键，避免路径穿越与碰撞。
+  - id: '307'
+    type: function
+    name: 修复历史双份残留
+    description: init 时清理旧版本遗留的 enabled/disabled 双份文件：enabled 侧可解析则删 disabled 侧副本。
+    depends_on: ["302"]
+    node_context:
+      keywords: ["legacy_repair", "core_c1"]
+      code_mapping:
+        - "packages/core/src/services/store.ts:154-170"
+
+- id: '40'
+  type: directory
+  name: 跨进程互斥域
+  description: 基于 O_EXCL 独占创建锁文件 + mtime 陈旧回收的跨进程咨询锁，支撑数据目录写串行化与部署互斥两种语义。
+  children:
+  - id: '401'
+    type: function
+    name: 互斥跨进程资源访问
+    description: withFileLockSync 持锁执行临界区，等待至超时或快速失败；releaseLock 释放；LockTimeoutError 表达竞争失败。
+    depends_on: []
+    node_context:
+      keywords: ["file_lock", "mutex", "stale_recovery"]
+      code_mapping:
+        - "packages/core/src/services/lock.ts:15-86"
+    children:
+    - id: '40101'
+      type: function_point
+      name: 独占创建锁文件
+      description: openSync(path,'wx') 仅唯一赢家成功，跨平台原子；锁文件写 PID 供诊断。
+    - id: '40102'
+      type: function_point
+      name: 陈旧锁抢占回收
+      description: 锁文件 mtime 超 staleMs（默认 10s）判定持有者崩溃，rename-then-recreate 抢占，竞争失败方自然落回重试。
+    - id: '40103'
+      type: function_point
+      name: 同步轮询等待
+      description: 默认 20ms 间隔轮询重试至 timeoutMs（默认 5s）超时抛 LockTimeoutError。
+    - id: '40104'
+      type: function_constraint
+      name: 等待阻塞事件循环
+      description: 等待以 Atomics.wait 同步睡眠实现，阻塞 Node 主线程最长 timeoutMs；Atomics 不可用退化为忙等。
+    - id: '40105'
+      type: function_point
+      name: 超时快速失败语义
+      description: timeoutMs=0 即单次尝试，供部署操作将竞争直接映射为 409 拒绝。
+
+- id: '50'
+  type: directory
+  name: 云端通信域
+  description: CloudClient 封装 chorus-cloud Worker 全部 REST 端点：预算重试、令牌管理、节点/配置/模板/订阅/渲染接口。
+  children:
+  - id: '501'
+    type: function
+    name: 调用云端接口
+    description: 统一 request 通道：单逻辑请求总预算、5xx 退避、401 换 token 重试、noRetry 快速失败。
+    depends_on: ["502"]
+    node_context:
+      keywords: ["request", "retry", "budget"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:156-239"
+    children:
+    - id: '50101'
+      type: function_point
+      name: 单请求总预算
+      description: REQUEST_BUDGET_MS=25s 覆盖全部尝试与退避睡眠，逐次尝试超时取 min(10s, 剩余预算)。
+    - id: '50102'
+      type: function_point
+      name: 5xx 与网络错误退避
+      description: 退避 [1,4,16,64]s，实际睡眠被剩余预算截断，最多 4 次尝试。
+    - id: '50103'
+      type: function_point
+      name: 401 换 token 重试
+      description: 401 且非 skipAuth 时清缓存令牌、仅首试换新 token 重试一次。
+    - id: '50104'
+      type: function_point
+      name: noRetry 快速失败
+      description: 尽力而为调用（如标签预检）跳过退避，慢失败不如快失败。
+    - id: '50105'
+      type: function_constraint
+      name: 预算耗尽错误信封
+      description: 预算耗尽抛 CLOUD_UNREACHABLE 503，消息含末次 HTTP 状态/错误与预算秒数，指引检查云端地址。
+    - id: '50106'
+      type: function_point
+      name: 非 JSON 响应体降级
+      description: HTML 错误页等非 JSON 体解析为 raw 文本截断，避免 HTTP 层失败被误判为网络错误进入重试。
+  - id: '502'
+    type: function
+    name: 管理访问令牌
+    description: 以静态 AUTH_TOKEN 换 24h JWT 内存缓存，过期前 60s 刷新；登录端点不可用回退静态 token。
+    depends_on: []
+    node_context:
+      keywords: ["jwt", "token_cache", "auth"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:60,82-141"
+    children:
+    - id: '50201'
+      type: function_spec
+      name: 令牌降级规格
+      description: 登录非 200、响应缺字段或网络失败均回退静态 token，认证端点故障不阻断业务请求。
+  - id: '503'
+    type: function
+    name: 管理节点注册与重绑定
+    description: 节点注册/心跳、列出云端节点、重绑定指纹迁移节点行与全部配置。
+    depends_on: ["501"]
+    node_context:
+      keywords: ["register", "rebind", "heartbeat"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:470-509"
+    children:
+    - id: '50301'
+      type: function_spec
+      name: 重绑定迁移规格
+      description: rebind 将旧指纹的 nodes 行与 client_configs 归入新指纹，返回迁移配置数，失败透传云端错误码。
+  - id: '504'
+    type: function
+    name: 同步节点配置记录
+    description: 按指纹命名空间上传/拉取/删除本节点配置（uploadNodeClient/getNodeClients/deleteNodeClient）与全量列表（getClients）。
+    depends_on: ["501"]
+    node_context:
+      keywords: ["node_clients", "fingerprint_namespace"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:390-468"
+    children:
+    - id: '50401'
+      type: function_constraint
+      name: 列表失败与空云严格区分
+      description: getClients ≥400 抛错而非返回空数组——把失败当空云会触发全量重传。
+  - id: '505'
+    type: function
+    name: 获取协议与模板
+    description: 协议/服务端/客户端/docker 四类模板与 sing-box 版本目录获取，支持版本过滤与 filtered_count。
+    depends_on: ["501"]
+    node_context:
+      keywords: ["templates", "protocols", "versions"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:246-327"
+  - id: '506'
+    type: function
+    name: 渲染协议与部署制品
+    description: renderProtocol 渲染单协议配置；renderDeploy 渲染部署全套制品（合并服务端配置+compose+entry.sh）。
+    depends_on: ["501"]
+    node_context:
+      keywords: ["render", "deploy_artifacts"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:329-388"
+    children:
+    - id: '50601'
+      type: function_spec
+      name: 新旧字段名双兼容
+      description: 响应同时接受 camelCase/snake_case（serverConfig/server_config）；singboxVersion/Image 缺省按 undefined 交调用方处理。
+    - id: '50602'
+      type: function_point
+      name: 云端缺端点显式报错
+      description: renderDeploy 404 抛 CLOUD_ENDPOINT_MISSING 502，由调用方感知需升级云端。
+  - id: '507'
+    type: function
+    name: 管理订阅记录
+    description: 订阅的列出/查询/创建/更新/删除，创建失败透传 zod issues 明细。
+    depends_on: ["501"]
+    node_context:
+      keywords: ["subscriptions", "crud"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:529-562"
+  - id: '508'
+    type: function
+    name: 预检标签可用性
+    description: checkTagAvailable 查询全局标签唯一性，端点不可用视为可用不阻塞创建。
+    depends_on: ["501"]
+    node_context:
+      keywords: ["tag_check", "no_retry"]
+      code_mapping:
+        - "packages/core/src/services/cloud-client.ts:511-522"
+
+- id: '60'
+  type: directory
+  name: 自动同步域
+  description: SyncService 后台同步引擎：变更即时触发、周期巡检、五级退避重试与单飞合并。
+  children:
+  - id: '601'
+    type: function
+    name: 触发即时同步
+    description: 本地变更后请求一轮同步；并发触发合并进运行中的一轮。
+    depends_on: ["701"]
+    node_context:
+      keywords: ["trigger", "coalesce", "fire_and_forget"]
+      code_mapping:
+        - "packages/core/src/services/sync-service.ts:46-60,111-118"
+    children:
+    - id: '60101'
+      type: function_constraint
+      name: 并发触发合并
+      description: 运行中再触发仅置 pending，本轮结束补跑一轮；多任务环境中宿主以 fire-and-forget 调用。
+    - id: '60102'
+      type: function_point
+      name: 直接起跑不置 pending
+      description: 无运行轮时立即起跑不置 pending，避免本轮 finally 误判为「运行期新变更」再冗余补跑。
+  - id: '602'
+    type: function
+    name: 周期巡检同步
+    description: tick 周期调用：有未同步条目即重试，否则到达拉取间隔才全量拉取他人配置。
+    depends_on: ["601"]
+    node_context:
+      keywords: ["tick", "pull_interval"]
+      code_mapping:
+        - "packages/core/src/services/sync-service.ts:62-79"
+    children:
+    - id: '60201'
+      type: function_spec
+      name: tick 间隔契约
+      description: 宿主须以 ≥30s 间隔调用 tick（core-D3，panel SYNC_TICK_MS=30s）；配置变更不得等 tick，须走 trigger。
+    - id: '60202'
+      type: function_spec
+      name: 拉取间隔规格
+      description: pullIntervalMs=600s，每轮消耗云端按节点数的列表查询，保持宽松防烧配额。
+  - id: '603'
+    type: function
+    name: 退避重试失败同步
+    description: 整轮失败按五级退避调度后台重试，成功即作废未到期定时器。
+    depends_on: ["601"]
+    node_context:
+      keywords: ["backoff", "retry"]
+      code_mapping:
+        - "packages/core/src/services/sync-service.ts:19,100-133"
+    children:
+    - id: '60301'
+      type: function_spec
+      name: 五级退避规格
+      description: "退避 [5s,15s,60s,300s,900s] 封顶，定时器 unref 不 hold 事件循环。"
+    - id: '60302'
+      type: function_point
+      name: 成功作废重试定时器
+      description: 成功轮清除未到期退避定时器，防手动 trigger 成功后再空烧一轮云端配额。
+  - id: '604'
+    type: function
+    name: 暴露同步状态
+    description: status 返回 syncing/lastSyncAt/pendingChanges/failCount 与上轮逐配置失败明细。
+    depends_on: []
+    node_context:
+      keywords: ["sync_status", "last_failures"]
+      code_mapping:
+        - "packages/core/src/services/sync-service.ts:27-44"
+    children:
+    - id: '60401'
+      type: function_point
+      name: 逐配置失败明细
+      description: lastFailures 携带每条推送失败的配置名与消息，让面板解释卡在 pending 的徽标而非只留服务端日志。
+  - id: '605'
+    type: function
+    name: 停止同步引擎
+    description: dispose 清定时器并置 disposed，实例此后不再自愈复活，由宿主重建新实例。
+    depends_on: []
+    node_context:
+      keywords: ["dispose", "lifecycle"]
+      code_mapping:
+        - "packages/core/src/services/sync-service.ts:30-32,135-139"
+    children:
+    - id: '60501'
+      type: function_constraint
+      name: 停止后禁止复活
+      description: disposed 后 trigger/tick/scheduleRetry 全部短路，重试定时器不得再拉起同步。
+
+- id: '70'
+  type: directory
+  name: 双向同步域
+  description: ChorusCore 内的双向同步算法：心跳、增量推送、删除对账（含空库守卫）、并行拉取与重装恢复。
+  children:
+  - id: '701'
+    type: function
+    name: 执行全量双向同步
+    description: syncAllToCloud 五步：注册心跳→增量推送→删除对账→并行拉取他节点→清理云端已删副本。
+    depends_on: ["503", "504", "306"]
+    node_context:
+      keywords: ["bidirectional_sync", "reconcile", "pull_budget"]
+      code_mapping:
+        - "packages/core/src/core.ts:170-303"
+    children:
+    - id: '70101'
+      type: function_point
+      name: 节点心跳尽力而为
+      description: 注册失败仅告警不阻断本轮配置同步。
+    - id: '70102'
+      type: function_point
+      name: 增量推送
+      description: 仅 synced=false 或与云端记录有差异的条目上传；启用切换只翻 enabled 靠 synced 标志触发。
+    - id: '70103'
+      type: function_point
+      name: 删除对账与空库守卫
+      description: 云端有而本地无的条目从云端删除；本地全空而云端仍有配置（重装现场）时跳过并告警，防误删云端副本。
+    - id: '70104'
+      type: function_point
+      name: 并行拉取共享预算
+      description: 他节点配置以 Promise.allSettled 并行拉取，共享 deadline=now+25s（core-P3 复用 core-D2 常量），N 个慢节点不再乘倍拉长整轮。
+    - id: '70105'
+      type: function_point
+      name: 清理云端已删副本
+      description: 拉取后按云端名单删除本地远端缓存中所有者已删的条目。
+    - id: '70106'
+      type: function_spec
+      name: 结果明细规格
+      description: 返回 {synced, skipped, pulled, deleted, failures[]}，failures 逐条携带配置名与错误消息。
+    - id: '70107'
+      type: function_constraint
+      name: 云端列表不可用即中止
+      description: getClients 失败按「本轮中止」处理而非视作空云，交由 SyncService 退避重试。
+  - id: '702'
+    type: function
+    name: 推送单条配置
+    description: syncToCloud 上传单条配置并标记已同步。
+    depends_on: ["504"]
+    node_context:
+      keywords: ["push_single", "upload"]
+      code_mapping:
+        - "packages/core/src/core.ts:144-160"
+  - id: '703'
+    type: function
+    name: 恢复云端配置
+    description: restoreFromCloud 重装后把本节点云端配置拉回可编辑库；逐条容错不因单条失败中断。
+    depends_on: ["504", "201"]
+    node_context:
+      keywords: ["restore", "reinstall_recovery"]
+      code_mapping:
+        - "packages/core/src/core.ts:305-338"
+    children:
+    - id: '70301'
+      type: function_constraint
+      name: 本地同名优先
+      description: 已存在同名本地条目跳过（本地编辑赢）；恢复条目标记 synced 且 deployed=false，须重新部署。
+  - id: '704'
+    type: function
+    name: 查询远端配置
+    description: 列出/单查/删除他节点配置（单查走门面，core-D1）；删除同时清云端与本地缓存。
+    depends_on: ["306", "504"]
+    node_context:
+      keywords: ["remote_query", "read_only"]
+      code_mapping:
+        - "packages/core/src/core.ts:361-378"
+
+- id: '80'
+  type: directory
+  name: 部署执行域
+  description: 云端渲染制品落盘 + docker compose 驱动：部署编排、健康检查回滚、生命周期控制与操作串行化。
+  children:
+  - id: '801'
+    type: function
+    name: 执行部署编排
+    description: core.deploy 校验启用集、注入版本 pin、调云端渲染、交 DockerManager 落盘启动、成功后标记部署集合。
+    depends_on: ["506", "802", "205"]
+    node_context:
+      keywords: ["deploy_orchestration", "no_fallback"]
+      code_mapping:
+        - "packages/core/src/core.ts:421-454"
+    children:
+    - id: '80101'
+      type: function_point
+      name: 无启用配置拒绝
+      description: enabled 为空抛 CFG_NONE_ENABLED，禁止空部署。
+    - id: '80102'
+      type: function_point
+      name: 注入本机版本 pin
+      description: AppConfig.singbox_version 由 core 注入渲染请求，不进 panel/ctl 请求体。
+    - id: '80103'
+      type: function_constraint
+      name: 制品云端单点无本地回退
+      description: 云端渲染失败部署即响亮失败，绝不静默用本地旧配置顶上（全局 ADR-003）。
+    - id: '80104'
+      type: function_point
+      name: 成功后标记部署集合
+      description: 部署成功把本批 enabled 配置置为部署集合，由 panel 触发同步上报 deployed 供订阅过滤。
+  - id: '802'
+    type: function
+    name: 落盘制品并启动容器
+    description: deployRendered 校验制品非空、备份旧配置、原子写 compose/entry/config、compose up 并等待健康。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["compose_up", "health_check", "rollback"]
+      code_mapping:
+        - "packages/core/src/services/docker-manager.ts:249-302"
+    children:
+    - id: '80201'
+      type: function_point
+      name: 部署前备份旧配置
+      description: 备份 data/config.json 带 ISO 时间戳，保留最近 5 份（BACKUP_KEEP）。
+    - id: '80202'
+      type: function_point
+      name: 容器健康检查窗口
+      description: 30s 内轮询（3s 间隔）compose ps，全部 running 且 healthy（或无 health 定义）判通过。
+    - id: '80203'
+      type: function_point
+      name: 失败回滚
+      description: 健康超时 compose down 并恢复备份配置；其他异常同样恢复备份后抛 DockerError。
+    - id: '80204'
+      type: function_point
+      name: 健康通过才落盘元信息
+      description: deploy-meta.json（版本/镜像/时间）在健康检查通过后原子写，回滚路径不留「看似成功」记录。
+    - id: '80205'
+      type: function_constraint
+      name: 制品原子写
+      description: 同目录 temp+rename 原子写，崩溃只留旧文件或新文件；临时文件不落 os.tmpdir 防跨设备 EXDEV。
+  - id: '803'
+    type: function
+    name: 串行化部署操作
+    description: 进程内 opQueue 链式串行 + deploying 标志 409 拒绝 + 跨进程部署锁 fail-fast。
+    depends_on: ["401"]
+    node_context:
+      keywords: ["op_queue", "409", "deploy_lock"]
+      code_mapping:
+        - "packages/core/src/services/docker-manager.ts:78-130"
+    children:
+    - id: '80301'
+      type: function_point
+      name: 进程内操作队列
+      description: opQueue 逐个 settle 后执行下一个，拒绝传播到各自调用方不断链。
+    - id: '80302'
+      type: function_point
+      name: 进行中并发拒绝
+      description: deploying 置位期间新请求直接 DeployInProgressError 409，与跨进程锁超时同语义。
+    - id: '80303'
+      type: function_point
+      name: 跨进程锁 fail-fast
+      description: withDeployLock 以 timeoutMs=0 单次抢锁，LockTimeoutError 映射 409（注：锁持有存在互斥缺口，见 risk.md RISK-CORE-001）。
+  - id: '804'
+    type: function
+    name: 控制部署生命周期
+    description: 停止/重启/状态/日志四类运维操作；停止同时清空部署集合。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["stop", "restart", "status", "logs"]
+      code_mapping:
+        - "packages/core/src/core.ts:462-478"
+        - "packages/core/src/services/docker-manager.ts:318-380"
+    children:
+    - id: '80401'
+      type: function_point
+      name: 重启失败降级重建
+      description: compose restart 失败降级为 down+up 重建。
+    - id: '80402'
+      type: function_point
+      name: 状态四态区分
+      description: deploying 优先；观测失败时探测 docker info，守护进程不可用报 unavailable 而非误报 stopped（core-A3）。
+    - id: '80403'
+      type: function_point
+      name: 停止清空部署集合
+      description: stopCompose 成功后 markDeployed([])，订阅端不再生成这些节点。
+  - id: '805'
+    type: function
+    name: 查询部署元信息
+    description: 读 deploy-meta.json 返回上次成功部署的版本/镜像/时间，缺失或不可读返回 null。
+    depends_on: ["802"]
+    node_context:
+      keywords: ["deploy_meta", "drift_hint"]
+      code_mapping:
+        - "packages/core/src/services/docker-manager.ts:304-316"
+        - "packages/core/src/core.ts:456-460"
+
+- id: '90'
+  type: directory
+  name: 配置校验域
+  description: SingboxValidator 以 docker run sing-box check 真实验证配置，附三层昂贵调用防御与镜像推导。
+  children:
+  - id: '901'
+    type: function
+    name: 校验 sing-box 配置
+    description: 将配置写入临时目录挂载进容器执行 check 命令，stderr 作为错误返回。
+    depends_on: ["903"]
+    node_context:
+      keywords: ["validate", "docker_run", "singbox_check"]
+      code_mapping:
+        - "packages/core/src/services/validator.ts:139-167"
+    children:
+    - id: '90101'
+      type: function_point
+      name: docker 不可用跳过
+      description: docker info 探测失败时返回 valid=true 并附提示——可用性探测失败不阻塞业务。
+    - id: '90102'
+      type: function_point
+      name: 临时目录容器校验
+      description: tmpdir/<uuid>/config.json 挂载为容器内 /etc/sing-box/config.json，finally 清理。
+    - id: '90103'
+      type: function_constraint
+      name: 校验任务串行执行
+      description: 同一时刻至多一个 docker run 校验在跑，突发请求排队而非并行堆容器。
+  - id: '902'
+    type: function
+    name: 防御昂贵校验调用
+    description: 内容哈希缓存 + 单飞合并 + 串行队列三层防御，防并发校验放大成多个 60s 级容器任务。
+    depends_on: ["901"]
+    node_context:
+      keywords: ["cache", "single_flight", "queue", "core_p1"]
+      code_mapping:
+        - "packages/core/src/services/validator.ts:23-26,100-137"
+    children:
+    - id: '90201'
+      type: function_spec
+      name: 缓存容量与时效
+      description: TTL 5min（镜像可能是 :latest）、容量 100、refresh-on-set 近似 LRU；同 key 并发共享同一 in-flight 结果。
+  - id: '903'
+    type: function
+    name: 推导生效镜像
+    description: deriveSingboxImage 依版本 pin 替换基础镜像 tag，未设版本原样返回（支持自定义镜像）。
+    depends_on: []
+    node_context:
+      keywords: ["image_tag", "version_pin"]
+      code_mapping:
+        - "packages/core/src/services/validator.ts:42-60"
+    children:
+    - id: '90301'
+      type: function_spec
+      name: tag 切分规格
+      description: 仅在最后一个 '/' 之后的首个 ':' 切分，兼容带端口的 registry 地址。
+
+- id: '95'
+  type: directory
+  name: 配置合并域
+  description: merger 提供云端渲染不可用时的本地回退装配（显式 API，部署链路不使用）。
+  children:
+  - id: '951'
+    type: function
+    name: 生成本地服务端配置
+    description: mergeServer 聚合启用条目的 inbound 为单文件服务端配置，出站 direct、路由 final direct。
+    depends_on: []
+    node_context:
+      keywords: ["merge_server", "fallback_assembly"]
+      code_mapping:
+        - "packages/core/src/services/merger.ts:5-30"
+  - id: '952'
+    type: function
+    name: 生成本地订阅配置
+    description: mergeSubscription 聚合 client 配置为仅 outbounds 的订阅体，追加 direct 出站。
+    depends_on: []
+    node_context:
+      keywords: ["merge_subscription", "outbounds_only"]
+      code_mapping:
+        - "packages/core/src/services/merger.ts:32-55"
+    children:
+    - id: '95201'
+      type: function_spec
+      name: 仅出站规格
+      description: 订阅只含 outbounds（数组或单对象均收），本地入站监听是客户端自身的事。
+
+- id: '99'
+  type: directory
+  name: 基础支撑域
+  description: 注入式日志、统一错误码与标签组合工具，被各域共用。
+  children:
+  - id: '991'
+    type: function
+    name: 注入宿主结构化日志
+    description: Logger 接口四级别；宿主未注入时 console 默认（warn/error 到 stderr，debug/info 丢弃），测试用 noop。
+    depends_on: []
+    node_context:
+      keywords: ["logger", "injection"]
+      code_mapping:
+        - "packages/core/src/logger.ts:14-41"
+  - id: '992'
+    type: function
+    name: 抛出统一业务错误
+    description: AppError（code/message/statusCode/details）与 ERRORS 错误码表统一模块内错误语义。
+    depends_on: []
+    node_context:
+      keywords: ["app_error", "error_codes"]
+      code_mapping:
+        - "packages/core/src/errors.ts:1-21"
+  - id: '993'
+    type: function
+    name: 组合节点标签
+    description: slugifyName 归一化节点名；composeTag 生成 `<node>-<协议短名>-<6位随机>` 标签。
+    depends_on: []
+    node_context:
+      keywords: ["tag", "slug", "random_suffix"]
+      code_mapping:
+        - "packages/core/src/tag.ts:10-33"
+
+# ── 全局功能树映射（../../architecture_views/function_tree.yml, base_commit 5ab6e0b）──
+# 用例编排域 → 804 管理系统设置（持久化权威端，合并判定 M10）
+# 配置生命周期域 → 101 管理节点配置（M1）
+# 本地持久化域 → 1001 持久化本地状态
+# 跨进程互斥域 → 1002 互斥跨进程资源访问
+# 云端通信域 → 401 管理协议模板 / 402 渲染配置制品 / 501 管理订阅 / 601 管理节点身份 / 102 预检配置资源冲突
+# 自动同步域 → 202 自动触发同步
+# 双向同步域 → 201 执行双向同步（M2）/ 203 恢复云端配置
+# 部署执行域 → 301 部署节点服务（M3）/ 302 管理容器生命周期
+# 配置校验域 → 701 校验 sing-box 配置（M8）
+# 配置合并域 → 402 渲染配置制品（本地合并侧）
+# 基础支撑域 → 11 运行支撑域（横切支撑能力）

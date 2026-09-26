@@ -1,0 +1,576 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 功能树 — ctl 模块 (packages/ctl/)
+# module: ctl (@chorus/ctl, chorusctl CLI)
+# base_commit: 5ab6e0b5439b72f3af60ca178147e57dc3fc31d9
+# 结构遵循 aet-project-analysis2/assets/modules/function_tree.yml 模板 (R1–R7)
+# ════════════════════════════════════════════════════════════════════════════
+
+- id: '1'
+  type: directory
+  name: 命令行管理域
+  description: chorusctl CLI 的全部业务能力：配置、部署、云端同步、节点身份、远端镜像、订阅、校验、诊断与面板，以及 CLI 输出/交互跨切面。业务逻辑全部委托 @chorus/core 门面。
+  children:
+  # ── 配置管理域 ────────────────────────────────────────────────────────────
+  - id: '10'
+    type: directory
+    name: 配置管理域
+    description: 本地节点配置的生命周期（增删改查/启停）、资源冲突检查与协议模板查询。packages/ctl/src/commands/config.ts
+    children:
+    - id: '101'
+      type: function
+      name: 管理本地节点配置
+      description: 对本地配置执行创建/更新/删除/启停/查询；删除带确认保护，更新参数后重渲染内容。
+      depends_on: ["103"]
+      node_context:
+        keywords: ["config_crud", "enable_disable", "cloud_template_render"]
+        code_mapping:
+          - "packages/ctl/src/commands/config.ts"
+      children:
+      - id: '10101'
+        type: function_point
+        name: 从云端模板创建配置
+        description: 按协议类型匹配云端模板，渲染 server/client 配置后落库，可创建为禁用态。
+        input: 协议类型 + key=value 参数 + --name/--node/--disabled
+        process: core.cloud.getTemplates 匹配 → core.generateConfig 渲染 → core.createConfig 落库
+        output: 配置条目（JSON 回显）
+        code_mapping: ["packages/ctl/src/commands/config.ts:78-105"]
+      - id: '10102'
+        type: function_point
+        name: 更新配置并重渲染内容
+        description: 支持迁移节点与参数覆盖；参数变化后重渲染配置内容，防止内容与参数脱节。
+        input: 配置名 + --node / --param key=value
+        process: 与现有参数合并 → core.generateConfig 重渲染 → core.configs.update
+        output: 更新后的配置条目
+        constraint: 参数变更后必须重新渲染 server/client 配置，与 panel create/update 语义一致
+        code_mapping: ["packages/ctl/src/commands/config.ts:112-139"]
+      - id: '10103'
+        type: function_point
+        name: 安全删除配置
+        description: 删除前先校验存在性，再经交互确认或 -y 跳过。
+        input: 配置名 + 可选 -y
+        process: core.configs.get 预检（不存在报 CFG_NOT_FOUND）→ confirm → core.configs.delete
+        output: { deleted: name }
+        constraint: 非交互环境（非 TTY）必须提供 -y，否则取消并提示
+        code_mapping: ["packages/ctl/src/commands/config.ts:145-158"]
+      - id: '10104'
+        type: function_point
+        name: 启用与禁用配置
+        description: 切换单个配置的 enabled 状态。
+        input: 配置名
+        process: core.configs.enable / disable
+        output: 更新后的配置条目
+        code_mapping: ["packages/ctl/src/commands/config.ts:172-196"]
+      - id: '10105'
+        type: function_point
+        name: 查询配置列表与详情
+        description: 列出全部配置（表格/JSON），或查看单条配置详情（含参数）。
+        input: 可选配置名
+        process: core.configs.listAll / get → printConfigs / printConfigDetail
+        output: 配置数组或单条详情
+        code_mapping: ["packages/ctl/src/commands/config.ts:58-68", "packages/ctl/src/utils.ts:75-104"]
+    - id: '102'
+      type: function
+      name: 检查配置资源冲突
+      description: 创建前的资源预检：tag 全局唯一性（本地 + 云端全节点）与本机端口占用。
+      depends_on: []
+      node_context:
+        keywords: ["tag_conflict", "port_conflict", "preflight_check"]
+        code_mapping:
+          - "packages/ctl/src/commands/config.ts:198-245"
+      children:
+      - id: '10201'
+        type: function_point
+        name: 检查 tag 全局可用性
+        description: 比对本地配置与远端镜像的 client_config.tag，再查云端全节点占用。
+        input: tag 字符串
+        process: 本地 listAll + listRemoteConfigs 比对 → core.cloud.checkTagAvailable
+        output: { tag, available, source? }
+        constraint: 云端不可达时降级为仅本地检查，必须显式声明 source=local_only，不得给出误导性的「可用」结论
+        code_mapping: ["packages/ctl/src/commands/config.ts:201-226"]
+      - id: '10202'
+        type: function_point
+        name: 检查端口占用冲突
+        description: 校验端口合法性（1-65535）并与已有配置的监听端口比对。
+        input: 端口号
+        process: 遍历 listAll 比对 server_config.listen_port / client_config.server_port
+        output: { port, available, conflictWith }
+        constraint: 冲突时以退出码 1 结束
+        code_mapping: ["packages/ctl/src/commands/config.ts:229-245"]
+    - id: '103'
+      type: function
+      name: 查询可用协议模板
+      description: 列出云端可用协议模板及其参数 schema，供创建配置时选择。
+      depends_on: []
+      node_context:
+        keywords: ["protocol_templates", "param_schema"]
+        code_mapping:
+          - "packages/ctl/src/commands/config.ts:247-257"
+          - "packages/ctl/src/utils.ts:113-128"
+      children:
+      - id: '10301'
+        type: function_point
+        name: 列出协议模板与参数说明
+        description: 拉取云端模板列表，人读模式展示参数名/类型/必填/描述。
+        input: 无
+        process: core.cloud.getTemplates → printTemplates
+        output: 模板数组（含 schema.params）
+        code_mapping: ["packages/ctl/src/commands/config.ts:250-253"]
+  # ── 部署管理域 ────────────────────────────────────────────────────────────
+  - id: '11'
+    type: directory
+    name: 部署管理域
+    description: Docker 容器的部署/停止/重启/状态/日志。packages/ctl/src/commands/deploy.ts
+    children:
+    - id: '111'
+      type: function
+      name: 管理 Docker 容器生命周期
+      description: 渲染云端模板并启动/停止/重启容器，查询部署状态与运行日志。
+      depends_on: []
+      node_context:
+        keywords: ["docker_deploy", "container_lifecycle", "deploy_logs"]
+        code_mapping:
+          - "packages/ctl/src/commands/deploy.ts"
+      children:
+      - id: '11101'
+        type: function_point
+        name: 部署或更新节点
+        description: 渲染配置并启动容器。
+        input: 无参数
+        process: core.deploy → printOk
+        output: { status: 'deployed' }
+        code_mapping: ["packages/ctl/src/commands/deploy.ts:24-36"]
+      - id: '11102'
+        type: function_point
+        name: 停止与重启容器
+        description: 停止运行中的容器或将其重启。
+        input: 无参数
+        process: core.stopDeploy / core.restartDeploy
+        output: { status: 'stopped' | 'restarted' }
+        code_mapping: ["packages/ctl/src/commands/deploy.ts:38-63"]
+      - id: '11103'
+        type: function_point
+        name: 查询部署状态与日志
+        description: 查看容器运行状态；按行数截取查看运行日志。
+        input: logs 可选 -t 行数（默认 50）
+        process: core.deployStatus / core.deployLogs(tail)
+        output: 状态对象 / 日志文本（JSON 模式包 {logs}）
+        constraint: tail 必须为正整数
+        code_mapping: ["packages/ctl/src/commands/deploy.ts:65-92"]
+      - id: '11104'
+        type: function_constraint
+        name: 部署变更后尽力同步约束
+        description: deploy/stop 后尽力同步一次云端（对齐 panel triggerSync）；同步失败仅警告，不掩盖部署本身的成败。
+        code_mapping: ["packages/ctl/src/commands/deploy.ts:14-22"]
+  # ── 云端同步域 ────────────────────────────────────────────────────────────
+  - id: '12'
+    type: directory
+    name: 云端同步域
+    description: 本地配置与云端的双向同步、同步状态观测与 Cloud 连接管理。packages/ctl/src/commands/cloud.ts
+    children:
+    - id: '121'
+      type: function
+      name: 同步本地配置到云端
+      description: 手动触发心跳+推送+对账删除+拉取的全量双向同步，并观测每配置同步状态。
+      depends_on: []
+      node_context:
+        keywords: ["cloud_sync", "reconcile", "sync_status"]
+        code_mapping:
+          - "packages/ctl/src/commands/cloud.ts:23-58"
+      children:
+      - id: '12101'
+        type: function_point
+        name: 执行手动双向同步
+        description: 调用 core.syncAllToCloud 完成推送/跳过/拉取/清理统计。
+        input: 无参数
+        process: core.syncAllToCloud → 输出统计；人读模式下部分失败以退出码 1 提示
+        output: { synced, skipped, pulled, deleted, failures[] }
+        code_mapping: ["packages/ctl/src/commands/cloud.ts:23-45"]
+      - id: '12102'
+        type: function_point
+        name: 查询各配置同步状态
+        description: 查看每个配置的同步状态与最近失败原因。
+        input: 无参数
+        process: core.getAllSyncStatuses → printSyncStatuses
+        output: 状态映射（JSON 另含 failures 数组）
+        code_mapping: ["packages/ctl/src/commands/cloud.ts:47-58", "packages/ctl/src/utils.ts:179-193"]
+    - id: '122'
+      type: function
+      name: 管理云端连接
+      description: 保存/探测 Cloud 连接凭据与查看连接状态。
+      depends_on: []
+      node_context:
+        keywords: ["cloud_connection", "credential_probe", "reachability"]
+        code_mapping:
+          - "packages/ctl/src/commands/cloud.ts:9-21", "packages/ctl/src/commands/cloud.ts:60-125"
+      children:
+      - id: '12201'
+        type: function_point
+        name: 保存连接信息并即时探测
+        description: 写入 cloud_url/cloud_token 后立即只读探测一次，让用户当场知道凭据是否可用。
+        input: --url / --token
+        process: core.updateAppConfig → core.cloud.getProtocols(true)
+        output: { ok, cloud_url, token_set, probe }
+        constraint: JSON 输出不回显 token 明文，只报 token_set 布尔；探测失败不影响已保存配置，仅退出码 1
+        code_mapping: ["packages/ctl/src/commands/cloud.ts:85-125"]
+      - id: '12202'
+        type: function_point
+        name: 预探测候选连接
+        description: 用临时 CloudClient 探测候选地址+token，不保存任何配置。
+        input: --url（默认 http://localhost:8787）+ 必填 --token
+        process: new CloudClient({cloud_url, cloud_token}) → getProtocols(true)（noRetry）
+        output: { reachable: true | false, error? }
+        code_mapping: ["packages/ctl/src/commands/cloud.ts:60-83"]
+      - id: '12203'
+        type: function_point
+        name: 查看云端连接状态
+        description: 以一次真实 API 调用探测云端可达性。
+        input: 无参数
+        process: core.cloud.getProtocols(true) 成败 → printCloudStatus
+        output: { connected, message? }
+        constraint: 不可达时退出码 1
+        code_mapping: ["packages/ctl/src/commands/cloud.ts:9-21"]
+  # ── 节点身份域 ────────────────────────────────────────────────────────────
+  - id: '13'
+    type: directory
+    name: 节点身份域
+    description: 节点指纹/名称/地址的管理与重装恢复。packages/ctl/src/commands/node.ts
+    children:
+    - id: '131'
+      type: function
+      name: 管理节点身份
+      description: 查看与设置节点名称/地址（同步心跳与订阅展示的关键字段）。
+      depends_on: []
+      node_context:
+        keywords: ["node_identity", "fingerprint", "node_address"]
+        code_mapping:
+          - "packages/ctl/src/commands/node.ts:9-58"
+      children:
+      - id: '13101'
+        type: function_point
+        name: 查看节点身份
+        description: 展示指纹/名称/地址/初始化状态/Cloud 凭据概要。
+        input: 无参数
+        process: core.getIdentity + core.getAppConfig
+        output: 身份对象（token 只报 token_set）
+        code_mapping: ["packages/ctl/src/commands/node.ts:9-37"]
+      - id: '13102'
+        type: function_point
+        name: 设置节点名称与地址
+        description: 更新 node_name / node_address（trim 后写入应用配置）。
+        input: --name / --address（至少其一）
+        process: core.updateAppConfig({node_name, node_address})
+        output: 更新后的身份
+        code_mapping: ["packages/ctl/src/commands/node.ts:39-58"]
+    - id: '132'
+      type: function
+      name: 恢复节点身份与配置
+      description: 重装恢复：导入既有指纹让云端继续识别本节点，并从云端拉回全部配置。
+      depends_on: []
+      node_context:
+        keywords: ["reinstall_recovery", "fingerprint_import", "cloud_restore"]
+        code_mapping:
+          - "packages/ctl/src/commands/node.ts:60-99"
+      children:
+      - id: '13201'
+        type: function_point
+        name: 导入既有指纹
+        description: 将重装前记录的指纹导入，恢复原节点身份。
+        input: fingerprint（8-128 位字母/数字/_/-）
+        process: core.importFingerprint
+        output: { fingerprint }
+        code_mapping: ["packages/ctl/src/commands/node.ts:60-72"]
+      - id: '13202'
+        type: function_point
+        name: 从云端拉回全部配置
+        description: 拉取云端归属本节点的全部配置；本地同名配置保留不动。
+        input: 无参数
+        process: 前置 isInitialized 校验 → core.restoreFromCloud
+        output: { restored[], skipped[] }
+        constraint: 未初始化（缺 node_name 或 cloud_token）时拒绝执行；恢复后需重新部署才会重新出现在订阅中
+        code_mapping: ["packages/ctl/src/commands/node.ts:74-99"]
+  # ── 远端镜像域 ────────────────────────────────────────────────────────────
+  - id: '14'
+    type: directory
+    name: 远端镜像域
+    description: 其他节点配置的只读镜像查询与镜像删除。packages/ctl/src/commands/remote.ts
+    children:
+    - id: '141'
+      type: function
+      name: 查询远端配置镜像
+      description: 列出或查看其他节点配置的本地只读镜像。
+      depends_on: []
+      node_context:
+        keywords: ["remote_mirror", "read_only", "other_nodes"]
+        code_mapping:
+          - "packages/ctl/src/commands/remote.ts:9-33"
+      children:
+      - id: '14101'
+        type: function_point
+        name: 列出远端配置
+        description: 输出远端配置表格（名称/类型/节点/状态/更新时间）。
+        input: 无参数
+        process: core.listRemoteConfigs → printRemoteConfigs
+        output: 远端配置数组
+        code_mapping: ["packages/ctl/src/commands/remote.ts:9-19"]
+      - id: '14102'
+        type: function_point
+        name: 查看单条远端配置
+        description: 按指纹+名称取单条远端镜像。
+        input: fingerprint + name
+        process: core.getRemoteConfig；不存在则报「先执行 cloud sync」
+        output: 远端配置 JSON
+        code_mapping: ["packages/ctl/src/commands/remote.ts:21-33"]
+    - id: '142'
+      type: function
+      name: 删除远端配置镜像
+      description: 同时删除本地镜像与云端条目，需确认保护。
+      depends_on: []
+      node_context:
+        keywords: ["remote_delete", "confirm_guard"]
+        code_mapping:
+          - "packages/ctl/src/commands/remote.ts:35-51"
+      children:
+      - id: '14201'
+        type: function_point
+        name: 删除远端配置（本地镜像+云端条目）
+        description: 经交互确认或 -y 后删除。
+        input: fingerprint + name + 可选 -y
+        process: confirm → core.deleteRemoteConfig
+        output: { deleted: name }
+        constraint: 非交互环境必须 -y
+        code_mapping: ["packages/ctl/src/commands/remote.ts:35-51"]
+  # ── 订阅交付域 ────────────────────────────────────────────────────────────
+  - id: '15'
+    type: directory
+    name: 订阅交付域
+    description: 云端订阅的 CRUD 管理（singbox / url 双交付型）。packages/ctl/src/commands/subscription.ts
+    children:
+    - id: '151'
+      type: function
+      name: 管理云端订阅
+      description: 订阅的创建/更新/删除/查询，含交付类型（singbox/url）选择、版本绑定、模板绑定与 token 轮换。
+      depends_on: []
+      node_context:
+        keywords: ["subscription_crud", "token_rotate", "singbox_version", "share_url"]
+        code_mapping:
+          - "packages/ctl/src/commands/subscription.ts"
+      children:
+      - id: '15101'
+        type: function_point
+        name: 创建订阅
+        description: 按 -t/--type 选择交付型创建订阅（缺省 singbox）；token 不传时由云端安全随机生成。
+        input: -t/--type（singbox|url）；singbox 型必填 --singbox-version；可选 --name/--path/--token/--template/--inactive
+        process: 类型前置校验（url 型禁传 --singbox-version/--template）→ core.createSubscription
+        output: 订阅对象（含 /s/<path> 链接）
+        constraint: singbox 型缺 --singbox-version 本地报错；url 型带版本/模板参数本地报错（不发起请求）
+        code_mapping: ["packages/ctl/src/commands/subscription.ts:51-84"]
+      - id: '15102'
+        type: function_point
+        name: 更新订阅
+        description: 更新名称/路径/版本/模板/启停，或重置 token 使旧链接立即失效。
+        input: id + --name/--path/--singbox-version/--template/--active/--inactive/--regenerate-token
+        process: 组装增量 → core.updateSubscription；--template none 映射为 null 清空
+        output: 更新后的订阅
+        constraint: --active 与 --inactive 互斥；空更新报错并列出可用选项；type 创建后不可变（云端 400 SUB_TYPE_IMMUTABLE）
+        code_mapping: ["packages/ctl/src/commands/subscription.ts:86-122"]
+      - id: '15103'
+        type: function_point
+        name: 删除订阅
+        description: 经确认或 -y 后删除订阅。
+        input: id + 可选 -y
+        process: confirm → core.deleteSubscription
+        output: { deleted: id }
+        code_mapping: ["packages/ctl/src/commands/subscription.ts:124-140"]
+      - id: '15104'
+        type: function_point
+        name: 查询订阅列表与详情
+        description: 列出全部订阅（表格含 Type 列）或查看单条详情（url 型不展示版本/模板行）。
+        input: 可选订阅 id
+        process: core.listSubscriptions / core.getSubscription → printSubscription
+        output: 订阅数组或详情
+        code_mapping: ["packages/ctl/src/commands/subscription.ts:9-48", "packages/ctl/src/utils.ts:195-214"]
+  # ── 配置校验域 ────────────────────────────────────────────────────────────
+  - id: '16'
+    type: directory
+    name: 配置校验域
+    description: sing-box 配置的多入口校验（文件/已存单侧/合并服务端/合并订阅）。packages/ctl/src/commands/validate.ts
+    children:
+    - id: '161'
+      type: function
+      name: 校验 sing-box 配置
+      description: 对四类输入执行 sing-box 配置校验并统一报告 valid/errors。
+      depends_on: []
+      node_context:
+        keywords: ["singbox_validate", "merged_config", "ci_gate"]
+        code_mapping:
+          - "packages/ctl/src/commands/validate.ts"
+      children:
+      - id: '16101'
+        type: function_point
+        name: 校验配置文件
+        description: 读取并解析 JSON 文件后校验。
+        input: 文件路径
+        process: readFileSync + JSON.parse → core.validate
+        output: { valid, errors[] }
+        code_mapping: ["packages/ctl/src/commands/validate.ts:14-25"]
+      - id: '16102'
+        type: function_point
+        name: 校验已存配置单侧内容
+        description: 校验已保存配置的 server 侧或 client 侧内容。
+        input: 配置名 + --side（默认 server）
+        process: core.configs.get 取对应侧 → core.validate
+        output: { valid, errors[] }
+        constraint: --side 仅允许 server|client
+        code_mapping: ["packages/ctl/src/commands/validate.ts:27-43"]
+      - id: '16103'
+        type: function_point
+        name: 校验合并后配置
+        description: 校验启用配置合并后的服务端配置与订阅配置（merged/subscription 两个子命令）。
+        input: 无参数
+        process: core.generateServerConfig / core.generateSubscription → core.validate
+        output: { valid, errors[] }
+        constraint: 校验失败（valid=false）时退出码 1，可作 CI 闸门
+        code_mapping: ["packages/ctl/src/commands/validate.ts:45-69", "packages/ctl/src/commands/validate.ts:9-12"]
+  # ── 诊断与面板域 ──────────────────────────────────────────────────────────
+  - id: '17'
+    type: directory
+    name: 诊断与面板域
+    description: 本地引擎健康检查与 Web 管理面板的启动。packages/ctl/src/index.ts、packages/ctl/src/commands/panel.ts
+    children:
+    - id: '171'
+      type: function
+      name: 检查本地引擎健康
+      description: 汇总配置统计（总数/启用/未同步）、节点身份与初始化状态。
+      depends_on: []
+      node_context:
+        keywords: ["health_check", "engine_status"]
+        code_mapping:
+          - "packages/ctl/src/index.ts:36-65"
+      children:
+      - id: '17101'
+        type: function_point
+        name: 输出本地引擎健康摘要
+        description: 一次调用产出 total/enabled/unsynced 配置数、fingerprint、node_name、initialized。
+        input: 无参数
+        process: core.configs.listAll + core.getIdentity + core.isInitialized
+        output: { ok, total_configs, enabled_configs, unsynced_configs, fingerprint, node_name, initialized, timestamp }
+        code_mapping: ["packages/ctl/src/index.ts:39-53"]
+    - id: '172'
+      type: function
+      name: 启动 Web 管理面板
+      description: 定位 ChorusPanel server 入口并以子进程启动，透传端口/主机与退出码。
+      depends_on: []
+      node_context:
+        keywords: ["panel_launcher", "entry_resolution", "on_demand_build"]
+        code_mapping:
+          - "packages/ctl/src/commands/panel.ts:94-114"
+      children:
+      - id: '17201'
+        type: function_point
+        name: 解析面板服务入口
+        description: 解析顺序：已安装 @chorus/panel 的 dist-server 优先，其次 monorepo 同级 packages/panel 按需构建；两者皆无则提示 npx。
+        input: 无参数
+        process: require.resolve('@chorus/panel/package.json') → 回退检查 ../panel 目录
+        output: { serverEntry, cwd } 或失败提示
+        constraint: monorepo 按需构建前置检查 node 与 pnpm（缺失给出安装指引而非裸 ENOENT）
+        code_mapping: ["packages/ctl/src/commands/panel.ts:39-92"]
+      - id: '17202'
+        type: function_point
+        name: 以子进程启动面板
+        description: spawn node 运行 server 入口，注入 CHORUS_PANEL_PORT/HOST，退出码透传。
+        input: -p 端口（默认 8088）/ --host（默认 127.0.0.1）
+        process: spawn('node', [serverEntry], {cwd, env, stdio:'inherit'}) → exit code 透传
+        output: 面板进程（前台）
+        code_mapping: ["packages/ctl/src/commands/panel.ts:94-114"]
+  # ── CLI 输出与交互域（跨切面） ────────────────────────────────────────────
+  - id: '18'
+    type: directory
+    name: CLI 输出与交互域
+    description: 跨所有命令的输出契约（--json 双模式）、错误出口、交互确认与参数解析。packages/ctl/src/utils.ts、packages/ctl/src/config.ts、packages/ctl/src/index.ts
+    children:
+    - id: '181'
+      type: function
+      name: 输出机器可读结果
+      description: 所有命令按 --json 开关在 JSON/人读双模式间切换输出。
+      depends_on: []
+      node_context:
+        keywords: ["json_contract", "dual_mode_output", "r_ctl_d4"]
+        code_mapping:
+          - "packages/ctl/src/utils.ts:4-59"
+          - "packages/ctl/src/config.ts"
+      children:
+      - id: '18101'
+        type: function_point
+        name: 双模式结果打印
+        description: JSON 模式 printJson（2 空格缩进）；人读模式表格/彩色文案。各 print* 帮助函数按数据形态分流。
+        input: 结果对象
+        process: isJson() 分支 → printJson 或 console.table/文案
+        output: stdout
+        code_mapping: ["packages/ctl/src/utils.ts:75-209"]
+      - id: '18102'
+        type: function_point
+        name: 统一错误出口
+        description: fail() 统一错误输出：JSON 模式 { ok:false, error[, detail] }，人读模式红色文案；随后退出码 1。
+        input: 错误消息 + 可选 detail
+        process: isJson() 分支 → JSON/文案 → process.exit(1)
+        output: stderr/stdout + 退出码 1
+        code_mapping: ["packages/ctl/src/utils.ts:16-24"]
+      - id: '18103'
+        type: function_spec
+        name: --json 单次调用契约
+        description: --json 是单次调用的输出契约，属进程内存态，不落盘；脚本集成必须用 --json，人读文案格式不保证稳定。
+        code_mapping: ["packages/ctl/src/config.ts:1-13", "packages/ctl/src/index.ts:19"]
+      - id: '18104'
+        type: function_constraint
+        name: 敏感信息脱敏约束
+        description: JSON 输出不得回显 token 明文，只允许 token_set 布尔或前 8 位截断。
+        code_mapping: ["packages/ctl/src/commands/cloud.ts:106-107", "packages/ctl/src/utils.ts:208", "packages/ctl/src/commands/subscription.ts:103"]
+    - id: '182'
+      type: function
+      name: 保障脚本安全的交互确认
+      description: 变更类命令的确认机制在非 TTY 环境自动返回 false，脚本永不被悬空 stdin 卡住。
+      depends_on: []
+      node_context:
+        keywords: ["confirm_guard", "non_tty", "script_safe"]
+        code_mapping:
+          - "packages/ctl/src/utils.ts:45-53"
+      children:
+      - id: '18201'
+        type: function_point
+        name: 非 TTY 自动拒绝确认
+        description: stdin 非 TTY 直接返回 false；提示文本走 stderr，由调用方决定是否以「需要 -y」失败。
+        input: 确认问题文本
+        process: process.stdin.isTTY 检查 → readline 提问 → /^y(es)?$/i 判定
+        output: boolean
+        constraint: 非交互环境必须配合 -y 选项完成变更类操作
+        code_mapping: ["packages/ctl/src/utils.ts:45-53"]
+    - id: '183'
+      type: function
+      name: 解析 key=value 参数
+      description: 将 key=value 形式的参数令牌解析为字典，供配置参数传递。
+      depends_on: []
+      node_context:
+        keywords: ["param_parsing", "strict_token"]
+        code_mapping:
+          - "packages/ctl/src/utils.ts:30-38"
+      children:
+      - id: '18301'
+        type: function_point
+        name: 严格解析参数令牌
+        description: 无 '=' 或空 key 的条目立即报错退出，不静默跳过，避免吞掉拼错的参数。
+        input: token 数组
+        process: indexOf('=') 切分（value 可含 '='）
+        output: Record<string, string>
+        constraint: 非法条目经 fail() 以退出码 1 终止
+        code_mapping: ["packages/ctl/src/utils.ts:30-38"]
+
+# ── 全局功能树映射（../../architecture_views/function_tree.yml, base_commit 5ab6e0b）──
+# 10 配置管理域 → 101 管理节点配置（M1）/ 102 预检配置资源冲突（M6）
+# 11 部署管理域 → 301 部署节点服务（M3）/ 302 管理容器生命周期
+# 12 云端同步域 → 201 执行双向同步（M2）
+# 13 节点身份域 → 601 管理节点身份（M7）/ 603 初始化与恢复节点
+# 14 远端镜像域 → 103 管理远端配置镜像
+# 15 订阅交付域 → 501 管理订阅（M5）
+# 16 配置校验域 → 701 校验 sing-box 配置（M8）
+# 17 诊断与面板域 → 1004 启动管理面板服务（M9）/ 302 管理容器生命周期
+# 18 CLI 输出与交互域 → 1005 交付命令行输出

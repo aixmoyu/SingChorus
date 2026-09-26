@@ -1,0 +1,113 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 功能树最小模板 (function_tree.yml)
+#
+# 这是模块级与全局合并级 function tree 的唯一输出格式。落盘前必须先读本模板，
+# 严格套用其结构与字段。校验脚本 scripts/validate-function-tree.mjs 会按 R1–R7
+# 检查结构合法性，不符会被判 FAIL。
+#
+# ── 结构硬规则 (R1–R7) ─────────────────────────────────────────────────────
+#   R1  顶层必须是以 `- id:` 起首的节点列表。
+#         ✗ 禁止 `module:` / `tree:` / `args:` 等 mapping 包装再挂节点。
+#         ✗ 禁止把 class/method/signature 当节点直接铺开。
+#   R2  节点 type ∈ {directory, function, function_point, function_spec,
+#         function_constraint}。其余任何 type 值一律非法。
+#   R3  directory 的 children 只能是 directory 与 function。
+#   R4  叶子节点必须是 function 及以下；directory 不能作叶子
+#         （directory 无 children 或空 children → FAIL）。
+#   R5  function 的 children 只能是 function_point / function_spec /
+#         function_constraint。
+#   R6  function_point / function_spec / function_constraint 必须是叶子
+#         （它们带 children → FAIL）。
+#   R7  每个节点必须有 id。
+#
+# ── 节点层级 ─────────────────────────────────────────────────────────────────
+#   directory        功能域（文件夹/职责边界，可多层嵌套，但不能作叶子）
+#     └─ function      业务功能（叶子或带 function_point/spec/constraint）
+#          ├─ function_point     功能点（细化 function 的某个能力面，按需多个）
+#          ├─ function_spec      功能规格（对整个 function 生效，按需）
+#          └─ function_constraint 功能约束（对整个 function 生效，按需）
+#
+# ── 命名规范 (关键) ──────────────────────────────────────────────────────────
+#   function tree 是「系统能做什么」的业务能力映射，不是代码结构映射。
+#   · function 名: 业务/用户视角的「动词 + 名词」或「名词 + 动作」
+#       ✓ Manage product information / 处理订单退款 / 派发事件 / 创建工作流
+#       ✗ 禁止用代码级概念: class 名 / Function 名 / Method 名 / 类型名。
+#         例如 EventBus、WorkflowEngine、parseArgs 是代码概念，不是业务功能——
+#         它们应被提炼为「派发输入事件」「编排工作流生命周期」「解析命令参数」。
+#   · directory 名: 功能域名称（名词性短语），如「订单域」「参数解析」。
+#   · function_point 名: 该能力面的一句话概括，如「退款金额校验」「单活跃工作流约束」。
+#   · 所有结论必须可追溯到 code_mapping 的真实代码路径（Gemba 现场原则）。
+# ════════════════════════════════════════════════════════════════════════════
+
+# 顶层: 直接是节点列表 (R1)。frontmatter 不用 YAML front matter (---)，用顶部注释即可。
+- id: '1'
+  type: directory
+  name: <功能域名称>            # 名词性短语，如「订单域」「核心引擎」
+  description: <功能域描述>      # 1–2 句: 该域的职责边界与所含能力
+  children:
+  # ── 子目录(可多层嵌套,但不能作为叶子节点 — R4) ──────────────────────────
+  - id: '10'
+    type: directory
+    name: <子功能域名称>
+    description: <子功能域描述>
+    children:
+    # ── function: 最小核心节点(叶子或带 function_point/spec/constraint) ───
+    #   function 是「系统能做什么」的独立业务功能描述, "动词+名词" 命名。
+    #   DO NOT 把 Class/Function/Method 等代码级概念作为 function 的 name。
+    - id: '101'
+      type: function
+      name: <功能名称>           # ✓ 派发输入事件 / 处理订单退款   ✗ EventBus / dispatch
+      description: <功能描述>     # 该功能做什么 + 关键语义(如返回值/触发条件)
+      depends_on:
+        - "10x"                  # 依赖的其他 function 节点 id 列表(无依赖写 depends_on: [])
+      node_context:
+        # keywords: 用于检索/聚合的语义标签(英文小写蛇形, 3–6 个)
+        keywords: ["refund", "order_cancel", "money_back"]
+        # code_mapping: 该功能落地的真实代码路径, 相对项目根。
+        #   优先文件夹颗粒度 (如 "src/order/"), 避免逐文件膨胀;
+        #   落到具体行用 "path/to/file.go:123"。此字段是 Gemba 证据, 必填。
+        code_mapping:
+          - "src/xxx/"
+          - "src/yyy/zzz.go"
+      children:
+      # ──── function_point: 功能点(按需添加, 一个 function 下可多个) ────────
+      #   细化 function 的某个能力面。其 spec/constraint 仅对本功能点生效,
+      #   不同于 function 下的 function_spec / function_constraint(后者对整个 function 生效)。
+      - id: '10101'
+        type: function_point
+        name: <功能点名称>        # 该能力面的一句话概括, 如「退款金额校验」
+        description: <功能点描述>
+        spec: <仅本功能点的规格>   # 规格说明: 金额上限/规则参数等(可选)
+        constraint: <仅本功能点的约束>  # 约束: 前置条件/不变量(可选)
+        input: <输入>            # 触发该能力面的事件/数据
+        process: <处理过程>       # 核心逻辑一句话(可引代码语义, 但须真实)
+        output: <输出>           # 产出/结果
+
+      # ──── function_constraint: 功能约束(按需添加) ─────────────────────────
+      #   对整个 function 生效的约束/不变量。必须是叶子(R6)。
+      - id: '10111'
+        type: function_constraint
+        name: <功能约束名称>      # 如「单活跃工作流约束」
+        description: <对整个功能生效的约束说明>
+
+      # ──── function_spec: 功能规格(按需添加) ───────────────────────────────
+      #   对整个 function 生效的规格说明。必须是叶子(R6)。
+      - id: '10112'
+        type: function_spec
+        name: <功能规格名称>      # 如「三层配置合并规格」
+        description: <对整个功能生效的规格说明>
+
+# ════════════════════════════════════════════════════════════════════════════
+# 填写 checklist (落盘前自检, 配合 validate-function-tree.mjs):
+#   □ 顶层是 `- id:` 列表, 不是 mapping 包装                      (R1)
+#   □ 所有 type ∈ {directory, function, function_point,
+#      function_spec, function_constraint}                        (R2)
+#   □ directory 下只有 directory / function                       (R3)
+#   □ 没有「directory 作叶子」(空 children 的 directory 必补子项)   (R4)
+#   □ function 下只有 function_point / function_spec /
+#      function_constraint                                        (R5)
+#   □ function_point / function_spec / function_constraint 是叶子 (R6)
+#   □ 每个节点都有 id                                             (R7)
+#   □ function 名是业务能力(动词+名词), 不是 class/method/类型名
+#   □ 每个 function 的 node_context.code_mapping 有真实代码路径
+# ════════════════════════════════════════════════════════════════════════════

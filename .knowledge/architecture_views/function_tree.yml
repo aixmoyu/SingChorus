@@ -1,0 +1,608 @@
+# ════════════════════════════════════════════════════════════════════════════
+# SingChorus · 全局功能树（跨模块合并，业务视角）
+# base_commit: 5ab6e0b5439b72f3af60ca178147e57dc3fc31d9
+# 由 subsystems/{core,cloud,panel,ctl}/function_tree.yml 合并去重而成；
+# 结构遵循 .opencode/skills/aet-project-analysis2/assets/modules/function_tree.yml (R1–R7)。
+# function 节点额外携带 module_refs（参与实现的模块列表）。
+#
+# ── 业务去重合并判定（每条合并的依据）───────────────────────────────────────
+#  M1 管理节点配置 ← core(配置生命周期域)+panel(配置管理域)+ctl(配置管理域)
+#     依据：同一业务对象「节点配置条目」的同一生命周期能力；panel BFF 路由与 ctl
+#     命令均零业务逻辑直调 core 门面（ctl src/commands/config.ts:9-11 薄适配）。
+#     cloud 的 client_configs 镜像不并入——它是同步产物而非 CRUD 源，归同步域(201/103)。
+#  M2 执行双向同步 ← core(双向同步域)+cloud(客户端配置同步域)
+#     依据：同一同步协议的两端实现（core 发起五步对账 / cloud 提供幂等 upsert 端点），
+#     (fingerprint,name) 幂等契约跨两端共享。
+#  M3 部署节点服务/管理容器生命周期 ← core(部署执行域)+panel(部署运维域)+ctl(部署管理域)
+#     依据：core 是唯一部署执行体（execFile 驱动 docker），panel/ctl 仅入口层。
+#  M4 管理协议模板/渲染配置制品 ← cloud(模板与协议域+渲染引擎域)+core+panel+ctl
+#     依据：cloud 是模板库与渲染唯一权威端（semver 判定单点 compat.ts:3-7），
+#     其余三模块为消费入口（ADR-003 云端单点、无本地回退）。
+#  M5 管理订阅 ← cloud(订阅交付域)+core+panel+ctl
+#     依据：同一订阅实体的管理能力四端分层实现；「交付订阅配置」为 cloud 独有
+#     业务（面向 sing-box 客户端的三级降级交付），独立成 502 不并入。
+#  M6 预检配置资源冲突 ← cloud(校验标签全局唯一)+core(预检标签可用性)+panel+ctl(check-tag)
+#     依据：同一「标签全局唯一」不变量的权威判定（cloud）与降级预检（core/panel/ctl，
+#     check-tag 降级输出 source:local_only）。
+#  M7 管理节点身份/登记心跳指标 ← core+cloud+ctl+panel
+#     依据：指纹本地管理+云端注册/迁移+心跳上报为同一节点身份业务的两端与入口。
+#  M8 校验 sing-box 配置 ← core(配置校验域)+ctl(配置校验域)
+#     依据：ctl 校验命令直调 core validator，同一业务功能不同入口。
+#  M9 启动管理面板服务 ← ctl(诊断与面板域)+panel(交付与运行域)
+#     依据：同一能力「启动面板服务进程」——ctl `panel start` 三级解析编排拉起，
+#     panel bin 预编译自举，语义等价。
+#  M10 管理系统设置 ← panel(系统设置域)+core(用例编排域·管理应用配置)
+#     依据：panel 设置保存直调 core updateAppConfig（局部合并整体落盘），
+#     core 为持久化权威端，panel 为入口层——与 M1 同构的入口/权威分层。
+# ── 不合并判定（语义独立，严禁合并）─────────────────────────────────────────
+#  N1 认证面板会话(801, cookie session) ✗ 认证管理令牌(901, cloud JWT)——同名独立
+#     策略、不同令牌体系与存储，非同一业务功能。
+#  N2 汇总运行信息看板(803, 本地聚合展示) ✗ 登记节点心跳与指标(602, 上报云端)——
+#     数据流向与业务目的不同。
+#  N3 判定 sing-box 版本兼容(403, 渲染/交付侧过滤) ✗ 校验 sing-box 配置(701,
+#     本地 docker 运行校验)——判定对象与执行位置不同。
+# ── 遗留 [待确认]（继承自模块分析，详见各模块 risk.md）────────────────────────
+#  [待确认: SyncService.tick 重入语义]（core 侧，panel risk RISK-PANEL-004）
+#  [待确认: 节点 offline 自动翻转逻辑]（cloud 侧，仅心跳置 online）
+#  [待确认: check-tag 降级退出码语义]（ctl 侧，退出码 0+source 字段是否破坏脚本）
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── D1 节点配置管理域 ──────────────────────────────────────────────────────
+- id: '1'
+  type: directory
+  name: 节点配置管理域
+  description: 节点配置条目的全生命周期：本地 CRUD 权威在 core，panel/ctl 为入口层，cloud 持有同步镜像与唯一性判定权威。
+  children:
+  - id: '10'
+    type: directory
+    name: 配置生命周期域
+    description: 配置的创建/更新/删除/启停、资源冲突预检与远端镜像管理。
+    children:
+    - id: '101'
+      type: function
+      name: 管理节点配置
+      description: 对本地配置执行创建/更新/删除/启停/查询；创建与更新必经云端模板渲染，删除带确认保护。合并判定 M1。
+      depends_on: ["402", "701"]
+      module_refs: [core, panel, ctl]
+      node_context:
+        keywords: ["config_crud", "config_lifecycle", "enable_disable"]
+        code_mapping:
+          - "packages/core/src/services/store.ts"
+          - "packages/core/src/core.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/config.ts"
+    - id: '102'
+      type: function
+      name: 预检配置资源冲突
+      description: 创建/更新前预检标签唯一性与端口占用；cloud 为唯一权威判定端，本地预检可降级并显式标注来源。合并判定 M6。
+      depends_on: []
+      module_refs: [cloud, core, panel, ctl]
+      node_context:
+        keywords: ["tag_uniqueness", "port_conflict", "preflight_degraded"]
+        code_mapping:
+          - "packages/cloud/src/routes/"
+          - "packages/core/src/services/cloud-client.ts"
+          - "packages/ctl/src/commands/config.ts"
+      children:
+      - id: '10201'
+        type: function_constraint
+        name: 标签唯一判定单点约束
+        description: 标签唯一性判定逻辑仅存在于 cloud（设计原则：杜绝两端漂移）；本地降级预检必须输出 source 字段显式区分判定来源。
+    - id: '103'
+      type: function
+      name: 管理远端配置镜像
+      description: 查询与删除 cloud 侧 client_configs 镜像（按节点/全局）；镜像内容由双向同步产生，本功能仅消费。
+      depends_on: ["201"]
+      module_refs: [panel, ctl]
+      node_context:
+        keywords: ["remote_mirror", "client_configs", "cleanup"]
+        code_mapping:
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+          - "packages/core/src/services/cloud-client.ts"
+
+# ── D2 云端同步域 ──────────────────────────────────────────────────────────
+- id: '2'
+  type: directory
+  name: 云端同步域
+  description: 本地与 cloud 之间配置数据的一致性保障：五步双向对账、自动触发与退避、重装恢复。
+  children:
+  - id: '20'
+    type: directory
+    name: 同步编排域
+    description: 同步协议执行、自动触发机制与恢复路径。
+    children:
+    - id: '201'
+      type: function
+      name: 执行双向同步
+      description: 心跳→推送→删除对账→并行拉取→对账五步同步；多节点拉取共享时间预算并行执行。合并判定 M2。
+      depends_on: ["601"]
+      module_refs: [core, cloud]
+      node_context:
+        keywords: ["two_way_sync", "reconcile", "idempotent_upsert"]
+        code_mapping:
+          - "packages/core/src/core.ts"
+          - "packages/cloud/src/routes/clients.ts"
+      children:
+      - id: '20101'
+        type: function_spec
+        name: 五步同步与空库守卫规格
+        description: 同步按「心跳/推送/删除对账/并行拉取/对账」五步执行；本地存储为空时跳过删除对账，防止重装后清空云端唯一副本。
+      - id: '20102'
+        type: function_spec
+        name: 跨模块超时预算契约
+        description: core 出站请求总预算 REQUEST_BUDGET_MS=25s，必须小于 panel 前端 axios 30s 超时，使云不可达呈现结构化错误而非前端超时；三处锚定需同改。
+    - id: '202'
+      type: function
+      name: 自动触发同步
+      description: 配置变更即时触发 + 30s 周期巡检 + 失败五级退避的进程内同步引擎；并发触发合并单飞。
+      depends_on: ["201"]
+      module_refs: [core, panel]
+      node_context:
+        keywords: ["auto_sync", "trigger_sync", "backoff"]
+        code_mapping:
+          - "packages/core/src/services/sync-service.ts"
+          - "packages/panel/server/core-provider.ts"
+      children:
+      - id: '20201'
+        type: function_spec
+        name: 单飞合并与退避规格
+        description: 并发触发合并为单次执行；退避 5s→900s 五级递增，成功即清定时器；失败逐配置上报 UI，不静默。
+    - id: '203'
+      type: function
+      name: 恢复云端配置
+      description: 重装/换机场景从 cloud 拉取全量配置恢复本地；与节点初始化向导及 ctl 恢复命令共用同一用例。
+      depends_on: ["201", "601"]
+      module_refs: [core, panel, ctl]
+      node_context:
+        keywords: ["restore", "reinstall_guard", "recovery"]
+        code_mapping:
+          - "packages/core/src/core.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+
+# ── D3 部署运维域 ──────────────────────────────────────────────────────────
+- id: '3'
+  type: directory
+  name: 部署运维域
+  description: sing-box 节点的容器化部署与容器生命周期管理；core 为唯一执行体，panel/ctl 为入口。
+  children:
+  - id: '30'
+    type: directory
+    name: 部署编排域
+    description: 部署编排（渲染→落盘制品→启动容器→健康检查→落盘元信息）与容器运行控制。
+    children:
+    - id: '301'
+      type: function
+      name: 部署节点服务
+      description: 云端渲染部署制品→原子落盘（备份保留 5 份）→execFile 启动容器→健康通过后才落盘成功元信息；失败 loud fail 无本地回退。合并判定 M3。
+      depends_on: ["402", "701"]
+      module_refs: [core, panel, ctl]
+      node_context:
+        keywords: ["deploy", "docker_compose", "health_check"]
+        code_mapping:
+          - "packages/core/src/services/docker-manager.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+      children:
+      - id: '30101'
+        type: function_spec
+        name: 部署时长预算规格
+        description: 部署总时长上限≈渲染 25s + docker 操作 60s + 健康检查 30s；部署类前端超时已放宽至 150s/90s。
+      - id: '30102'
+        type: function_constraint
+        name: 部署操作串行化约束
+        description: 部署操作经进程内 opQueue 串行化，进行中重复请求返回 409 DeployInProgress；跨进程互斥经文件锁（实现存在 P0 缺口，见 risk.md）。
+    - id: '302'
+      type: function
+      name: 管理容器生命周期
+      description: 容器的停止/重启/状态查询（含部署元信息与 drift 提示）/日志查看；docker daemon 不可用时报 unavailable 而非误报 stopped。合并判定 M3。
+      depends_on: ["301"]
+      module_refs: [core, panel, ctl]
+      node_context:
+        keywords: ["container_lifecycle", "drift_hint", "unavailable_state"]
+        code_mapping:
+          - "packages/core/src/services/docker-manager.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+
+# ── D4 模板与渲染域 ────────────────────────────────────────────────────────
+- id: '4'
+  type: directory
+  name: 模板与渲染域
+  description: 协议模板库与配置渲染引擎；cloud 为唯一权威端，渲染为纯逻辑零 IO，semver 兼容判定单点。
+  children:
+  - id: '40'
+    type: directory
+    name: 模板库域
+    description: 四类统一模板表的管理与内置预置。
+    children:
+    - id: '401'
+      type: function
+      name: 管理协议模板
+      description: 协议模板/overall 模板的增删改查、内置模板预置、兼容范围声明与 sing-box 版本目录聚合。合并判定 M4。
+      depends_on: []
+      module_refs: [cloud, core, panel, ctl]
+      node_context:
+        keywords: ["template_management", "builtin_templates", "compat_scope"]
+        code_mapping:
+          - "packages/cloud/src/routes/"
+          - "packages/cloud/src/db/schema.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+  - id: '41'
+    type: directory
+    name: 渲染引擎域
+    description: 配置制品渲染与版本兼容判定；引擎纯逻辑、DB 经构造注入。
+    children:
+    - id: '402'
+      type: function
+      name: 渲染配置制品
+      description: 模板插值/凭据生成/协议与整体配置拼装/docker 编排产物渲染；云端唯一渲染器，其余模块为调用入口。合并判定 M4。
+      depends_on: ["401"]
+      module_refs: [cloud, core, panel, ctl]
+      node_context:
+        keywords: ["render", "interpolation", "artifact_generation"]
+        code_mapping:
+          - "packages/cloud/src/engine/"
+          - "packages/core/src/services/cloud-client.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/config.ts"
+      children:
+      - id: '40201'
+        type: function_spec
+        name: 云端单点渲染规格
+        description: 渲染仅在 cloud 执行，无本地模板回退——cloud 不可渲染时部署显式失败（fail loudly），杜绝两端渲染逻辑漂移。
+    - id: '403'
+      type: function
+      name: 判定 sing-box 版本兼容
+      description: 订阅实例与 sing-box 版本的 semver 兼容判定，贯穿列表过滤/写路径预校验/交付强制/渲染冲突清单四道防线。
+      depends_on: []
+      module_refs: [cloud, core]
+      node_context:
+        keywords: ["semver_compat", "version_binding", "four_defenses"]
+        code_mapping:
+          - "packages/cloud/src/engine/compat.ts"
+          - "packages/cloud/src/routes/subscriptions.ts"
+          - "packages/core/src/services/docker-manager.ts"
+      children:
+      - id: '40301'
+        type: function_spec
+        name: 兼容判定单点与四道防线规格
+        description: semver 判定逻辑仅存在于 cloud engine/compat；在列表过滤、订阅写路径预校验、交付端强制校验、渲染冲突清单四处强制执行。
+
+# ── D5 订阅交付域 ──────────────────────────────────────────────────────────
+- id: '5'
+  type: directory
+  name: 订阅交付域
+  description: 订阅的管理与双交付型（singbox=JSON 配置 / url=分享链接 URI 列表）交付（含降级）；管理面四端分层，交付面为 cloud 独有。
+  children:
+  - id: '50'
+    type: directory
+    name: 订阅管理域
+    description: 订阅实体管理与交付执行。
+    children:
+    - id: '501'
+      type: function
+      name: 管理订阅
+      description: 订阅的创建（先选交付类型；singbox 型必填 sing-box 版本与模板，url 型不涉及版本/模板）/更新/吊销（换 token 即失效）管理，type 创建后不可变。合并判定 M5。
+      depends_on: ["403"]
+      module_refs: [cloud, core, panel, ctl]
+      node_context:
+        keywords: ["subscription_crud", "token_rotation", "version_required", "subscription_type"]
+        code_mapping:
+          - "packages/cloud/src/routes/subscriptions.ts"
+          - "packages/core/src/services/cloud-client.ts"
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+    - id: '502'
+      type: function
+      name: 交付订阅配置
+      description: 订阅拉取交付，按 type 分流：singbox 型面向 sing-box 客户端（过滤不兼容实例并生成最终配置 JSON）；url 型面向 V2rayN 类客户端（实例 clientConfig 转 vless/hysteria2/trojan/ss/vmess URI 按行交付 text/plain）；D1 故障时三级降级。
+      depends_on: ["403", "501"]
+      module_refs: [cloud]
+      node_context:
+        keywords: ["subscription_delivery", "stale_cache", "degradation", "share_url"]
+        code_mapping:
+          - "packages/cloud/src/routes/subscriptions.ts"
+          - "packages/cloud/src/engine/share-urls.ts"
+          - "packages/cloud/src/db/schema.ts"
+      children:
+      - id: '50201'
+        type: function_spec
+        name: 三级降级规格
+        description: isolate 内存缓存(300s) → sub_delivery_cache 陈旧交付(24h，写限频 5min/path) → 显式 503 DB_UNAVAILABLE；管理面不降级；缓存行以 {__format} 标记区分 json/text 两种交付格式。
+      - id: '50202'
+        type: function_constraint
+        name: 降级路径安全约束
+        description: 陈旧缓存仅存 token SHA-256 哈希；订阅禁用或换 token 后降级路径同样失效；缓存写失败不破坏主流程。
+      - id: '50203'
+        type: function_constraint
+        name: url 型交付约束
+        description: URI 格式钉 vless=Xray-core#716、hysteria2=官方 URI-Scheme 双规范；单实例转换失败不阻断交付（跳过），全部失败才 500 SHARE_URL_NONE；url 型不做 sing-box compat 过滤（消费端非 sing-box）。
+
+# ── D6 节点身份域 ──────────────────────────────────────────────────────────
+- id: '6'
+  type: directory
+  name: 节点身份域
+  description: 节点身份（指纹/注册/重绑定）、初始化向导与心跳指标。
+  children:
+  - id: '60'
+    type: directory
+    name: 节点身份与初始化域
+    description: 身份生命周期管理、初始化/恢复流程与运行遥测。
+    children:
+    - id: '601'
+      type: function
+      name: 管理节点身份
+      description: 本地节点指纹生成与持久化、向 cloud 注册/迁移身份（rebind 显式化）、身份恢复。合并判定 M7。
+      depends_on: []
+      module_refs: [core, cloud, ctl, panel]
+      node_context:
+        keywords: ["node_identity", "fingerprint", "rebind"]
+        code_mapping:
+          - "packages/core/src/services/store.ts"
+          - "packages/core/src/services/cloud-client.ts"
+          - "packages/cloud/src/routes/"
+          - "packages/ctl/src/commands/"
+      children:
+      - id: '60101'
+        type: function_constraint
+        name: 指纹归属约束
+        description: 节点指纹决定云端数据归属；误配 CHORUS_FINGERPRINT 指向他机身份会造成两机归属冲突，重绑定必须走显式 rebind 流程。
+    - id: '602'
+      type: function
+      name: 登记节点心跳与指标
+      description: 节点向 cloud 上报心跳与运行指标（同步首轮即心跳）；cloud 侧登记并置 online。
+      depends_on: ["601"]
+      module_refs: [core, cloud]
+      node_context:
+        keywords: ["heartbeat", "metrics_report", "online_status"]
+        code_mapping:
+          - "packages/core/src/core.ts"
+          - "packages/cloud/src/routes/"
+    - id: '603'
+      type: function
+      name: 初始化与恢复节点
+      description: 面板初始化向导（连通预检→注册身份→重装恢复）与 CLI 身份恢复命令，共用恢复用例。
+      depends_on: ["601", "203"]
+      module_refs: [panel, ctl, core]
+      node_context:
+        keywords: ["node_init_wizard", "reinstall_recovery", "connectivity_preflight"]
+        code_mapping:
+          - "packages/panel/server/routes/"
+          - "packages/ctl/src/commands/"
+          - "packages/core/src/core.ts"
+
+# ── D7 配置校验域 ──────────────────────────────────────────────────────────
+- id: '7'
+  type: directory
+  name: 配置校验域
+  description: sing-box 配置在真实容器中的运行校验，含昂贵调用的防御与状态语义。
+  children:
+  - id: '70'
+    type: directory
+    name: 配置校验域
+    description: 校验执行与防御机制。
+    children:
+    - id: '701'
+      type: function
+      name: 校验 sing-box 配置
+      description: 经临时容器运行 sing-box 校验配置合法性；内容哈希缓存+single-flight+串行队列三层防御。合并判定 M8。
+      depends_on: []
+      module_refs: [core, ctl]
+      node_context:
+        keywords: ["config_validation", "expensive_call_defense", "docker_run"]
+        code_mapping:
+          - "packages/core/src/services/validator.ts"
+          - "packages/ctl/src/commands/"
+      children:
+      - id: '70101'
+        type: function_spec
+        name: 昂贵调用三层防御规格
+        description: 内容哈希缓存(5min) + single-flight + 串行队列，防突发放大成多个 60s 级容器任务。
+      - id: '70102'
+        type: function_constraint
+        name: 观测与业务状态分离约束
+        description: docker daemon 不可用时校验 fail-open 放行但观测状态报 unavailable，健康通过后才落盘成功元信息。
+
+# ── D8 面板接入域 ──────────────────────────────────────────────────────────
+- id: '8'
+  type: directory
+  name: 面板接入域
+  description: 管理面板（panel）的 BFF 网关、会话认证、前端交互与本地看板。
+  children:
+  - id: '80'
+    type: directory
+    name: 面板网关域
+    description: 面板自有接入面与会话体系。
+    children:
+    - id: '801'
+      type: function
+      name: 认证面板会话
+      description: 首次设置/登录/登出/改密的 cookie 会话认证；cookie secure 按请求信号自适应，登录限流为进程内存态。
+      depends_on: []
+      module_refs: [panel]
+      node_context:
+        keywords: ["panel_auth", "cookie_session", "rate_limit"]
+        code_mapping:
+          - "packages/panel/server/auth.ts"
+          - "packages/panel/server/routes/auth.ts"
+          - "packages/panel/server/config.ts"
+    - id: '802'
+      type: function
+      name: 治理面板 API 接入
+      description: BFF 单出口路由分发、CORS 白名单、请求 ID 追踪、错误信封归一与生产 5xx 脱敏、反代适配。
+      depends_on: []
+      module_refs: [panel]
+      node_context:
+        keywords: ["bff_gateway", "cors", "error_envelope", "request_id"]
+        code_mapping:
+          - "packages/panel/server/app.ts"
+          - "packages/panel/server/env.ts"
+          - "packages/panel/server/logger.ts"
+    - id: '803'
+      type: function
+      name: 汇总运行信息看板
+      description: 聚合本地节点运行信息供前端展示；采集失败降级为零值而非报错。
+      depends_on: ["302"]
+      module_refs: [panel]
+      node_context:
+        keywords: ["dashboard", "runtime_info", "graceful_zero"]
+        code_mapping:
+          - "packages/panel/server/routes/"
+          - "packages/panel/src/"
+    - id: '804'
+      type: function
+      name: 管理系统设置
+      description: 面板系统设置（cloud 地址/token/sing-box 版本 pin/镜像源）查看与保存，连通性测试含候选探测不落盘；持久化权威在 core 应用配置用例。合并判定 M10。
+      depends_on: []
+      module_refs: [panel, core]
+      node_context:
+        keywords: ["settings", "version_pin", "connectivity_test"]
+        code_mapping:
+          - "packages/panel/server/routes/"
+          - "packages/panel/src/stores/"
+          - "packages/core/src/core.ts"
+          - "packages/core/src/schemas/config.ts"
+      node_context:
+        keywords: ["settings", "version_pin", "connectivity_test"]
+        code_mapping:
+          - "packages/panel/server/routes/"
+          - "packages/panel/src/stores/"
+    - id: '805'
+      type: function
+      name: 守护前端交互
+      description: SPA 页面访问守卫、401 跳转、统一错误提示与领域状态管理。
+      depends_on: ["801"]
+      module_refs: [panel]
+      node_context:
+        keywords: ["spa_guard", "http_401_redirect", "state_management"]
+        code_mapping:
+          - "packages/panel/src/"
+
+# ── D9 云端接入域 ──────────────────────────────────────────────────────────
+- id: '9'
+  type: directory
+  name: 云端接入域
+  description: cloud 的管理面接入：JWT 令牌认证、请求治理、审计与账户。
+  children:
+  - id: '90'
+    type: directory
+    name: 云端网关域
+    description: cloud 管理 API 的接入横切面。
+    children:
+    - id: '901'
+      type: function
+      name: 认证管理令牌
+      description: 管理端 JWT 的签发/轮换/吊销与请求校验；吊销检查在 D1 宕机时 fail-open（有界窗口 24h）。
+      depends_on: []
+      module_refs: [cloud]
+      node_context:
+        keywords: ["admin_jwt", "token_rotation", "fail_open_revocation"]
+        code_mapping:
+          - "packages/cloud/src/auth/"
+    - id: '902'
+      type: function
+      name: 治理云端请求接入
+      description: 请求日志与追踪 ID、数据库就绪保障、统一错误出口（{error:{code,message}} 信封）与健康检查暴露。
+      depends_on: []
+      module_refs: [cloud]
+      node_context:
+        keywords: ["request_governance", "error_envelope", "health_check"]
+        code_mapping:
+          - "packages/cloud/src/index.ts"
+          - "packages/cloud/src/routes/"
+    - id: '903'
+      type: function
+      name: 管理审计日志
+      description: 管理操作的审计记录写入与查询。
+      depends_on: ["901"]
+      module_refs: [cloud]
+      node_context:
+        keywords: ["audit_log", "admin_actions"]
+        code_mapping:
+          - "packages/cloud/src/routes/"
+          - "packages/cloud/src/db/schema.ts"
+    - id: '904'
+      type: function
+      name: 管理终端用户账户
+      description: 终端用户账户的管理能力。
+      depends_on: ["901"]
+      module_refs: [cloud]
+      node_context:
+        keywords: ["user_accounts", "admin"]
+        code_mapping:
+          - "packages/cloud/src/routes/"
+
+# ── D10 运行支撑域 ─────────────────────────────────────────────────────────
+- id: '11'
+  type: directory
+  name: 运行支撑域
+  description: 跨模块运行支撑：本地持久化与跨进程互斥、双运行时适配、CLI 交付与面板服务自举。
+  children:
+  - id: '100'
+    type: directory
+    name: 本地运行支撑域
+    description: core 提供的本地状态持久化与多进程安全。
+    children:
+    - id: '1001'
+      type: function
+      name: 持久化本地状态
+      description: 配置/指纹/部署元信息的原子持久化（temp+rename）、损坏文件隔离自愈、列表缓存与历史快照。
+      depends_on: []
+      module_refs: [core]
+      node_context:
+        keywords: ["atomic_write", "self_heal", "local_store"]
+        code_mapping:
+          - "packages/core/src/services/store.ts"
+          - "packages/core/src/services/docker-manager.ts"
+    - id: '1002'
+      type: function
+      name: 互斥跨进程资源访问
+      description: panel 与 ctl 双进程共享数据目录的写互斥：O_EXCL 独占创建锁+mtime 陈旧回收+同步轮询等待。
+      depends_on: []
+      module_refs: [core]
+      node_context:
+        keywords: ["file_lock", "cross_process_mutex", "stale_lock_recovery"]
+        code_mapping:
+          - "packages/core/src/services/lock.ts"
+          - "packages/core/src/services/store.ts"
+  - id: '105'
+    type: directory
+    name: 运行时与交付支撑域
+    description: cloud 双运行时适配、面板服务启动编排与 CLI 输出契约。
+    children:
+    - id: '1003'
+      type: function
+      name: 适配双运行时
+      description: 同一 Hono app 跑 Workers+D1 与 Node+SqliteD1；平台差异（D1 适配/限流/密钥来源/日志级别）收敛到单一接缝。
+      depends_on: []
+      module_refs: [cloud]
+      node_context:
+        keywords: ["dual_runtime", "adapter_seam", "sqlite_d1"]
+        code_mapping:
+          - "packages/cloud/src/node/"
+          - "packages/cloud/src/index.ts"
+    - id: '1004'
+      type: function
+      name: 启动管理面板服务
+      description: 面板服务进程的启动编排：ctl 三级解析（已装包→monorepo 构建→npx 提示）与 panel bin 预编译自举。合并判定 M9。
+      depends_on: []
+      module_refs: [ctl, panel]
+      node_context:
+        keywords: ["panel_start", "prebuilt_bin", "resolution_chain"]
+        code_mapping:
+          - "packages/ctl/src/commands/panel.ts"
+          - "packages/panel/bin/"
+    - id: '1005'
+      type: function
+      name: 交付命令行输出
+      description: CLI 机器可读输出（--json 契约）、非 TTY 安全交互确认与 key=value 参数解析。
+      depends_on: []
+      module_refs: [ctl]
+      node_context:
+        keywords: ["json_output_contract", "tty_confirm", "cli_parse"]
+        code_mapping:
+          - "packages/ctl/src/index.ts"
+          - "packages/ctl/src/utils.ts"

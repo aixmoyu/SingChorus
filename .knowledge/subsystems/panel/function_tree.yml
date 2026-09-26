@@ -1,0 +1,633 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 功能树 — packages/panel (ChorusPanel 管理面板)
+# base_commit: 5ab6e0b5439b72f3af60ca178147e57dc3fc31d9
+# 结构遵循 .opencode/skills/aet-project-analysis2/assets/modules/function_tree.yml (R1–R7)
+# ════════════════════════════════════════════════════════════════════════════
+
+- id: '1'
+  type: directory
+  name: 接入与安全网关
+  description: Express BFF 的统一入口层：路由分发、CORS/CSRF 来源校验、安全响应头、请求日志与链路 ID、统一错误信封。
+  children:
+  - id: '101'
+    type: function
+    name: 分发 API 路由
+    description: 挂载 auth/core/settings/info/init 五组路由；未知 /api 路径回 JSON 404，其余路径回退 SPA index.html。
+    depends_on: ["102", "201"]
+    node_context:
+      keywords: ["routing", "bff", "spa_fallback", "api_404"]
+      code_mapping:
+        - "packages/panel/server/app.ts:119-135"
+        - "packages/panel/server/index.ts:4-12"
+  - id: '102'
+    type: function
+    name: 校验跨域写请求来源
+    description: 非幂等请求要求 Origin 同源或命中 CORS 白名单，无 Origin（curl/服务间）放行；作为 SameSite Cookie 的补充 CSRF 防线。
+    depends_on: []
+    node_context:
+      keywords: ["csrf", "origin_check", "cors"]
+      code_mapping:
+        - "packages/panel/server/app.ts:28-56"
+        - "packages/panel/server/env.ts:24-31,57-65"
+  - id: '103'
+    type: function
+    name: 加固 HTTP 响应
+    description: 禁用 x-powered-by，设置 nosniff/X-Frame-Options DENY/Referrer-Policy；JSON 体积上限 10mb；文本响应启用压缩。
+    depends_on: []
+    node_context:
+      keywords: ["hardening", "security_headers", "compression"]
+      code_mapping:
+        - "packages/panel/server/app.ts:78-91"
+  - id: '104'
+    type: function
+    name: 归一化错误响应
+    description: 集中式错误处理器把抛出的异常转换为稳定错误信封（error.code + error.message）；Zod 校验错误渲染为单行可读消息。
+    depends_on: []
+    node_context:
+      keywords: ["error_envelope", "error_handler", "zod"]
+      code_mapping:
+        - "packages/panel/server/api-error.ts:15-31"
+        - "packages/panel/server/app.ts:137-151"
+  - id: '105'
+    type: function
+    name: 追踪全链路请求 ID
+    description: pino-http 生成/透传 X-Request-ID 并存入 AsyncLocalStorage，深层（core→CloudClient）读取后转发云端，panel→cloud 日志可串联。
+    depends_on: []
+    node_context:
+      keywords: ["request_id", "tracing", "async_local_storage"]
+      code_mapping:
+        - "packages/panel/server/app.ts:97-114"
+        - "packages/panel/server/request-context.ts:15-18"
+        - "packages/panel/server/core-provider.ts:92-95"
+    children:
+    - id: '10501'
+      type: function_constraint
+      name: 生产 5xx 脱敏与全量留痕
+      description: 生产环境 5xx 响应只回 Internal server error，但服务端必记完整 err+stack；曾因缺此日志导致 VPS 故障不可排查。
+    - id: '10502'
+      type: function_constraint
+      name: 日志密钥脱敏
+      description: pino redact 将 password/token/authorization/cookie 等路径替换为 [REDACTED]，debug 级别也不泄漏密钥（packages/panel/server/logger.ts:17-29）。
+  - id: '106'
+    type: function
+    name: 适配反向代理环境
+    description: CHORUS_PANEL_TRUST_PROXY 控制 trust proxy，使 req.ip 从 X-Forwarded-For 解析，登录限流按真实客户端 IP 计数。
+    depends_on: []
+    node_context:
+      keywords: ["trust_proxy", "reverse_proxy", "rate_limit_key"]
+      code_mapping:
+        - "packages/panel/server/env.ts:33-50"
+        - "packages/panel/server/app.ts:65-68"
+
+- id: '2'
+  type: directory
+  name: 认证与会话域
+  description: 单管理员口令认证：首次设置、登录、注销、改密；JWT 写入 HttpOnly Cookie，配密码强度策略与内存态登录限流。
+  children:
+  - id: '201'
+    type: function
+    name: 完成首次管理员设置
+    description: 仅 first_run 可调用；校验口令策略后 bcrypt 哈希落盘，并在配置写锁内递增 token_version 使旧令牌全部失效。
+    depends_on: ["207"]
+    node_context:
+      keywords: ["first_run", "setup", "bcrypt"]
+      code_mapping:
+        - "packages/panel/server/auth.ts:60-73"
+        - "packages/panel/server/routes/auth.ts:62-82"
+  - id: '202'
+    type: function
+    name: 登录管理面板
+    description: 校验口令后签发 12h JWT Cookie；连续失败触发锁定，成功即清零；首未初始化返回 first_run 引导。
+    depends_on: ["201", "207"]
+    node_context:
+      keywords: ["login", "jwt", "session"]
+      code_mapping:
+        - "packages/panel/server/routes/auth.ts:84-109"
+        - "packages/panel/server/auth.ts:101-121"
+    children:
+    - id: '20201'
+      type: function_point
+      name: 暴力尝试锁定
+      description: 同源 IP 连续 5 次失败锁定 15 分钟；状态为进程内存态，重启即清（单管理员本地面板可接受），机会式清扫防膨胀。
+      spec: MAX_FAILURES=5 / LOCKOUT_MS=15min
+      input: 登录/设置请求（含源 IP）
+      process: failures Map 记数→达阈值置 lockedUntil→日志告警
+      output: 429 too_many_attempts
+  - id: '203'
+    type: function
+    name: 签发与清除会话 Cookie
+    description: JWT 放入 httpOnly Cookie（chorus_panel_token，12h）；注销时以相同属性镜像清除，保证浏览器可靠匹配删除。
+    depends_on: []
+    node_context:
+      keywords: ["cookie", "http_only", "same_site"]
+      code_mapping:
+        - "packages/panel/server/auth.ts:101-132"
+    children:
+    - id: '20301'
+      type: function_constraint
+      name: secure 标志按请求自适应
+      description: Cookie secure 取 req.secure（直连 TLS 或受信代理终结 HTTPS 均为真），而非 NODE_ENV；曾按 NODE_ENV 设置导致纯 HTTP 部署浏览器丢弃 Cookie、登录陷入 401 死循环。
+  - id: '204'
+    type: function
+    name: 校验访问令牌
+    description: 中间件从 Cookie 验签 JWT 并比对 token_version，不匹配即未认证；受保护路由经 requireAuth 统一拦截返回 401。
+    depends_on: ["203"]
+    node_context:
+      keywords: ["auth_middleware", "jwt_verify", "token_version"]
+      code_mapping:
+        - "packages/panel/server/auth.ts:134-163"
+    children:
+    - id: '20401'
+      type: function_spec
+      name: token_version 失效语义
+      description: token_version 随每次密码设置/修改递增并写入 JWT payload；验签时 ver 不等即拒绝，实现改密后旧会话（含当前会话）全量失效、路由重发新 Cookie。
+  - id: '205'
+    type: function
+    name: 修改管理员密码
+    description: 验证旧口令+新口令策略，在配置写锁内完成读改写并递增 token_version；路由随后重签 Cookie 保持会话不中断。
+    depends_on: ["204", "207"]
+    node_context:
+      keywords: ["change_password", "token_invalidate"]
+      code_mapping:
+        - "packages/panel/server/auth.ts:85-99"
+        - "packages/panel/server/routes/auth.ts:116-140"
+  - id: '206'
+    type: function
+    name: 查询认证状态
+    description: 返回 first_run/initialized/authenticated 三态，前端据此路由到登录或初始化向导。
+    depends_on: []
+    node_context:
+      keywords: ["auth_status", "bootstrap"]
+      code_mapping:
+        - "packages/panel/server/routes/auth.ts:54-60"
+  - id: '207'
+    type: function
+    name: 校验密码强度策略
+    description: 最少 8 字符且四类字符（小写/大写/数字/符号）至少占三类；返回结构化错误码供 UI 精确提示。
+    depends_on: []
+    node_context:
+      keywords: ["password_policy", "validation"]
+      code_mapping:
+        - "packages/panel/server/auth.ts:11-14,38-58"
+
+- id: '3'
+  type: directory
+  name: 节点初始化域
+  description: 首次运行向导：节点身份+云端连接的预检、提交、注册与重装恢复；失败在提交前中止，不留半初始化状态。
+  children:
+  - id: '301'
+    type: function
+    name: 查询初始化向导状态
+    description: 返回 initialized、节点指纹、节点名/地址、云端 URL 及 token 是否已设置（只回 'set' 不回明文）。
+    depends_on: []
+    node_context:
+      keywords: ["wizard_state", "fingerprint"]
+      code_mapping:
+        - "packages/panel/server/routes/init.ts:16-27"
+  - id: '302'
+    type: function
+    name: 提交节点初始化
+    description: 预检云端→（可选）指纹改绑→落盘 panel 配置→镜像写入 core app config→best-effort 注册节点→启动同步定时器。
+    depends_on: ["801", "802", "803"]
+    node_context:
+      keywords: ["wizard", "register_node", "init_commit"]
+      code_mapping:
+        - "packages/panel/server/routes/init.ts:43-154"
+    children:
+    - id: '30201'
+      type: function_point
+      name: 预检云端连通
+      description: 用候选 URL/token 直连探活（noRetry 快速失败）；cloud_required 时不可达即 502 中止向导。
+      constraint: 探活发生在任何配置落盘之前
+      input: cloud_url + cloud_token
+      process: new CloudClient().getProtocols(true)
+      output: 502 CLOUD_UNREACHABLE 或继续
+    - id: '30202'
+      type: function_point
+      name: 注册节点身份
+      description: 提交成功后向云端注册 fingerprint/name/address；失败仅告警，交由后台同步重试（best-effort）。
+      input: core.getIdentity()
+      process: core.cloud.registerNode
+      output: 注册成功或告警日志
+    - id: '30203'
+      type: function_point
+      name: 恢复重装前配置
+      description: 携带 previous_fingerprint 时先在云端把旧节点配置改绑到新指纹（提交前完成，失败即中止），再 restoreFromCloud 拉回配置（失败仅告警，后台同步兜底）。
+      constraint: 改绑仅在 previous≠current 时执行
+      input: previous_fingerprint
+      process: probe.rebindNode → core.restoreFromCloud
+      output: rebound 标志 + restored/skipped 计数
+  - id: '303'
+    type: function
+    name: 测试云端连通性
+    description: 对当前已保存云端设置重新探活，返回 reachable 布尔与错误消息（不抛 5xx）。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["connectivity_test", "probe"]
+      code_mapping:
+        - "packages/panel/server/routes/init.ts:157-166"
+
+- id: '4'
+  type: directory
+  name: 配置管理域
+  description: 本机协议配置 CRUD 与启停、标签/端口预检，以及他机配置（remote）的只读查看与删除；全部经 core 门面操作本地存储。
+  children:
+  - id: '401'
+    type: function
+    name: 创建协议配置
+    description: Zod 校验 name/node/type 与三个 record 后经 core.configs.add 落盘，创建成功即触发即时同步。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["create_config", "zod", "crud"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:11-18,36-53"
+  - id: '402'
+    type: function
+    name: 查询配置集合
+    description: 列出本机全部配置、按名取单条（不存在映射 404）、以及为创建表单预填节点地址/名称。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["list_configs", "prefill"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:30-34,56-63,117-126"
+  - id: '403'
+    type: function
+    name: 更新协议配置
+    description: 部分字段更新（server/client/params/node/enabled），成功后触发即时同步。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["update_config", "partial_update"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:128-144"
+  - id: '404'
+    type: function
+    name: 删除协议配置
+    description: 按名删除本机配置并触发即时同步；core 未命中映射 404。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["delete_config"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:146-157"
+  - id: '405'
+    type: function
+    name: 切换配置启停
+    description: enable/disable 后回读条目并触发即时同步，订阅端可见性随之变化。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["enable_disable", "toggle"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:159-185"
+  - id: '406'
+    type: function
+    name: 预检配置标签唯一
+    description: 提交前校验 tag 在本机（自有+远端）不冲突，再查云端全节点唯一性。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["check_tag", "uniqueness"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:69-96"
+    children:
+    - id: '40601'
+      type: function_point
+      name: 云端不可达降级
+      description: 云端查询失败时降级为仅本地判定 available=true，并回传 detail 供 UI/日志解释跳过原因。
+      constraint: 降级不阻断创建流程
+      input: check-tag 请求
+      process: catch → local_only 判定
+      output: { tag, available, source: 'local_only', detail }
+  - id: '407'
+    type: function
+    name: 预检监听端口占用
+    description: 校验端口 1-65535 后与本机全部配置的 listen_port/server_port 比对，报告冲突配置名。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["check_port", "conflict"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:103-115"
+  - id: '408'
+    type: function
+    name: 管理远端节点配置
+    description: 列出/单查/删除他机配置；单查走 core 门面（core-D1），删除后触发同步使云端一致。
+    depends_on: ["801", "803"]
+    node_context:
+      keywords: ["remote_configs", "facade"]
+      code_mapping:
+        - "packages/panel/server/routes/core/configs.ts:189-216"
+        - "packages/core/src/core.ts:366-370"
+
+- id: '5'
+  type: directory
+  name: 云端协同域
+  description: 经 core 门面代理云端能力：模板浏览（按版本过滤）、版本目录、参数生成、订阅 CRUD、连接状态与同步健康。
+  children:
+  - id: '501'
+    type: function
+    name: 浏览订阅模板
+    description: 拉取模板并回传 filtered_count；默认注入本机 sing-box 版本供云端按 singbox_compat 过滤，亦可用 ?singbox_version= 显式覆盖（订阅按绑定版本过滤）。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["templates", "version_filter", "compat"]
+      code_mapping:
+        - "packages/panel/server/routes/core/cloud.ts:39-54"
+  - id: '502'
+    type: function
+    name: 查询版本目录
+    description: 从云端聚合 docker 模板 enum 得可用 sing-box 版本目录，设置页与订阅创建共用。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["singbox_versions", "catalog"]
+      code_mapping:
+        - "packages/panel/server/routes/core/cloud.ts:57-66"
+  - id: '503'
+    type: function
+    name: 生成协议参数
+    description: 按 type+params 经 core 生成配置载荷（云端渲染），失败映射结构化错误码。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["generate", "protocol_params"]
+      code_mapping:
+        - "packages/panel/server/routes/core/cloud.ts:68-83"
+  - id: '504'
+    type: function
+    name: 管理订阅生命周期
+    description: 订阅列表/详情/创建/更新/删除；创建时先选交付类型（singbox=JSON 配置 / url=分享链接），singbox 型继续选模板与绑定版本，url 型隐藏版本/模板；更新支持 path/token/active/regenerateToken，type 创建后不可变。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["subscriptions", "crud", "regenerate_token", "subscription_type", "share_url"]
+      code_mapping:
+        - "packages/panel/server/routes/core/cloud.ts:110-189"
+      ui_mapping:
+        - "packages/panel/src/views/SubscriptionCreate.vue（类型单选，url 型隐藏版本/模板）"
+        - "packages/panel/src/views/SubscriptionDetail.vue（类型只读标签）"
+        - "packages/panel/src/views/Subscriptions.vue（列表 Type 列）"
+  - id: '505'
+    type: function
+    name: 查看云端连接状态
+    description: 探活返回 connected 布尔；另提供协议实例列表查询。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["cloud_status", "instances"]
+      code_mapping:
+        - "packages/panel/server/routes/core/cloud.ts:100-108,191-200"
+  - id: '506'
+    type: function
+    name: 查看同步健康状态
+    description: 返回各配置同步状态与上一轮逐配置推送失败明细，使 UI 上卡在 pending 的徽标可解释而非只看服务端日志。
+    depends_on: ["802"]
+    node_context:
+      keywords: ["sync_status", "last_failures", "observability"]
+      code_mapping:
+        - "packages/panel/server/routes/core/cloud.ts:85-98"
+
+- id: '6'
+  type: directory
+  name: 部署运维域
+  description: 经 core 驱动宿主 docker daemon（DooD）完成 sing-box 部署/停止/重启，暴露部署状态、元信息与容器日志。
+  children:
+  - id: '601'
+    type: function
+    name: 部署 sing-box 服务
+    description: 可选 server/docker 总模板 id（缺省用云端默认）；成功与失败均记录耗时，失败必留痕（容器可能已启动但标记未写）；成功后触发同步刷新订阅可见性。
+    depends_on: ["801", "803"]
+    node_context:
+      keywords: ["deploy", "singbox", "health_check"]
+      code_mapping:
+        - "packages/panel/server/routes/core/deploy.ts:19-40"
+  - id: '602'
+    type: function
+    name: 停止部署
+    description: 停止并清理 sing-box 容器，清空 deployed 集合后触发同步使订阅端移除这些节点。
+    depends_on: ["803"]
+    node_context:
+      keywords: ["stop_deploy"]
+      code_mapping:
+        - "packages/panel/server/routes/core/deploy.ts:64-76"
+  - id: '603'
+    type: function
+    name: 重启部署
+    description: 重启既有 sing-box 容器；docker 不可用映射 503 DOCKER_UNAVAILABLE。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["restart_deploy"]
+      code_mapping:
+        - "packages/panel/server/routes/core/deploy.ts:78-87"
+  - id: '604'
+    type: function
+    name: 查询部署状态与元信息
+    description: 返回部署状态；deploy/meta 回上次成功部署的版本/镜像/时间，旧部署无记录回 null（前端显示 unknown）。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["deploy_status", "deploy_meta"]
+      code_mapping:
+        - "packages/panel/server/routes/core/deploy.ts:42-62"
+  - id: '605'
+    type: function
+    name: 查看容器日志
+    description: 按 tail（默认 100 行）拉取容器日志，切分为行数组返回。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["container_logs", "tail"]
+      code_mapping:
+        - "packages/panel/server/routes/core/deploy.ts:89-100"
+
+- id: '7'
+  type: directory
+  name: 系统设置域
+  description: 云端连接（URL/token）、节点身份与 sing-box 版本 pin 的查看/保存/探活；保存即失效核心缓存并镜像进 core 配置。
+  children:
+  - id: '701'
+    type: function
+    name: 查看系统设置
+    description: 汇总 panel 配置与 core store 的 singbox_version，附 effective_cloud_url（含默认回退解析结果）。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["settings_view", "effective_url"]
+      code_mapping:
+        - "packages/panel/server/routes/settings.ts:12-24"
+  - id: '702'
+    type: function
+    name: 保存系统设置
+    description: Zod 校验后更新 panel 配置；invalidateCore 重建实例；节点身份+云端设置镜像写入 core app config；singbox_version 显式携带时写 core store 并二次失效（校验器镜像随版本 pin）。
+    depends_on: ["701", "801", "804"]
+    node_context:
+      keywords: ["settings_save", "invalidate", "version_pin"]
+      code_mapping:
+        - "packages/panel/server/routes/settings.ts:26-74"
+    children:
+    - id: '70201'
+      type: function_spec
+      name: 版本正则与云端一致
+      description: SINGBOX_VERSION_RE 与 cloud 端同名正则保持一致；'' 表示未设置（跟随模板默认）。
+  - id: '703'
+    type: function
+    name: 测试云端连通
+    description: 先失效缓存再以最新配置探活；另支持 test-candidate：对候选 URL/token 探活但不落盘（noRetry 省请求预算）。
+    depends_on: ["801", "804"]
+    node_context:
+      keywords: ["test_connection", "candidate_probe"]
+      code_mapping:
+        - "packages/panel/server/routes/settings.ts:76-120"
+
+- id: '8'
+  type: directory
+  name: 自动同步引擎域
+  description: 面板侧 core 生命周期的唯一管理者：按配置快照缓存/重建 ChorusCore，驱动 30s 后台同步与变更后即时同步。
+  children:
+  - id: '801'
+    type: function
+    name: 维护核心实例缓存
+    description: 快照（cloudUrl/token/singboxVersion/Image）未变即复用单例；变更则重建并重绑同步服务；core 日志并入 pino（component:core）并携带请求 ID。
+    depends_on: []
+    node_context:
+      keywords: ["core_cache", "snapshot_rebuild", "singleton"]
+      code_mapping:
+        - "packages/panel/server/core-provider.ts:35-103"
+    children:
+    - id: '80101'
+      type: function_spec
+      name: 配置快照比对重建
+      description: 快照四元组任一变化即 new ChorusCore；singbox 版本/镜像读自 core store（与 ctl 共享同一数据目录，单一事实源），面板与 ctl 两侧改动均能被感知。
+  - id: '802'
+    type: function
+    name: 驱动后台定时同步
+    description: 初始化完成后启动 30s 定时 tick，重试失败推送并拉取他机配置；未配置 cloud_token 时跳过；定时器 unref 不阻退出。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["sync_timer", "background_retry"]
+      code_mapping:
+        - "packages/panel/server/core-provider.ts:40-41,120-128"
+  - id: '803'
+    type: function
+    name: 触发变更即时同步
+    description: 本地变更（配置增删改/启停/部署/停止）后 fire-and-forget 触发一轮同步；未配置云端时静默跳过。
+    depends_on: ["802"]
+    node_context:
+      keywords: ["trigger_sync", "fire_and_forget"]
+      code_mapping:
+        - "packages/panel/server/core-provider.ts:131-135"
+  - id: '804'
+    type: function
+    name: 失效核心缓存
+    description: 设置保存/初始化提交后丢弃缓存实例与同步服务，下一请求按新配置重建。
+    depends_on: ["801"]
+    node_context:
+      keywords: ["invalidate_cache"]
+      code_mapping:
+        - "packages/panel/server/core-provider.ts:142-149"
+
+- id: '9'
+  type: directory
+  name: 运行信息看板域
+  description: 仪表盘汇总：数据目录、配置数、同步引擎健康与面板版本框架信息。
+  children:
+  - id: '901'
+    type: function
+    name: 汇总面板运行信息
+    description: 聚合 data_dir/config_count/sync 状态（仅初始化后）/panel_version/framework；core 未就绪时优雅降级为零值。
+    depends_on: ["801", "802"]
+    node_context:
+      keywords: ["dashboard", "info_summary", "degrade"]
+      code_mapping:
+        - "packages/panel/server/routes/info.ts:9-29"
+
+- id: '10'
+  type: directory
+  name: 前端交互域
+  description: Vue 3 SPA：路由守卫、会话失效处理、统一错误归一化与按领域划分的 Pinia 状态；所有数据经自家 BFF 的 /api 获取。
+  children:
+  - id: '1001'
+    type: function
+    name: 守卫页面访问
+    description: 未认证跳登录；已认证未初始化强制进向导；已初始化不再滞留 /setup（向导可复用为身份编辑器）。
+    depends_on: ["1004"]
+    node_context:
+      keywords: ["router_guard", "auth_flow"]
+      code_mapping:
+        - "packages/panel/src/router/index.ts:29-44"
+  - id: '1002'
+    type: function
+    name: 处理会话失效跳转
+    description: 全局 401 拦截跳登录页，但豁免 /auth/* 端点与 login/setup 页（含循环断路器），防止过期会话在登录/向导间无限弹跳。
+    depends_on: ["1001"]
+    node_context:
+      keywords: ["401_interceptor", "redirect_loop"]
+      code_mapping:
+        - "packages/panel/src/lib/http.ts:24-45"
+  - id: '1003'
+    type: function
+    name: 统一前端错误提示
+    description: extractApiError 把 axios 错误归一为 { status, code, message }；ECONNABORTED 超时转为指向面板日志与云设置的可读提示。
+    depends_on: []
+    node_context:
+      keywords: ["api_error", "timeout_hint"]
+      code_mapping:
+        - "packages/panel/src/lib/http.ts:47-84"
+  - id: '1004'
+    type: function
+    name: 管理页面领域状态
+    description: 按 auth/cloud/config/deploy/info/init/settings/subscription/template 分 store；部署等长耗时请求单独放宽超时（deploy 150s、stop/restart 90s），轮询留在视图层保证 store 可单测。
+    depends_on: ["1003"]
+    node_context:
+      keywords: ["pinia_stores", "state_domains", "timeout_override"]
+      code_mapping:
+        - "packages/panel/src/stores/"
+        - "packages/panel/src/stores/deploy.ts:13-17,35-52"
+        - "packages/panel/src/lib/sync-status.ts:4-16"
+
+- id: '11'
+  type: directory
+  name: 交付与运行域
+  description: 自托管交付：多阶段镜像构建、DooD compose 编排、npm 预编译产物启动与 GHCR 发布通道。
+  children:
+  - id: '1101'
+    type: function
+    name: 构建自托管镜像
+    description: node:22-alpine 多阶段构建：先 core 后 panel（panel 引用 core dist 产物）；生产依赖按 panel 闭包重装；运行时仅装 docker CLI+compose 插件（DooD）；自带 wget 健康检查。
+    depends_on: []
+    node_context:
+      keywords: ["dockerfile", "multi_stage", "healthcheck"]
+      code_mapping:
+        - "packages/panel/Dockerfile:10-33"
+        - "packages/panel/Dockerfile:35-58"
+  - id: '1102'
+    type: function
+    name: 编排容器运行
+    description: 挂载宿主 docker.sock 与 $HOME/.singchorus（两侧路径必须一致，SINGCHORUS_HOME 单点控制）；默认 8088 端口；extra_hosts 打通 host.docker.internal；PANEL_IMAGE 可切换 GHCR 镜像。
+    depends_on: ["1101"]
+    node_context:
+      keywords: ["compose", "dood", "path_parity"]
+      code_mapping:
+        - "packages/panel/docker-compose.yml:8-14,15-42"
+  - id: '1103'
+    type: function
+    name: 启动预编译服务
+    description: npm bin 不编译：校验 dist-server 存在后直接 import 加载；--port/--host 解析为 CHORUS_PANEL_* 环境变量。
+    depends_on: []
+    node_context:
+      keywords: ["npx_entry", "prebuilt"]
+      code_mapping:
+        - "packages/panel/bin/chorus-panel.mjs:4-9,30-51"
+        - "packages/panel/package.json:12-19"
+  - id: '1104'
+    type: function
+    name: 发布镜像通道
+    description: GHCR 发布 chorus-panel 镜像：panel-v* 标签触发版本通道（latest），main 分支持续产出 edge 通道。
+    depends_on: ["1101"]
+    node_context:
+      keywords: ["ghcr", "release_channel", "edge"]
+      code_mapping:
+        - ".github/workflows/docker-panel.yml:51-69"
+
+# ── 全局功能树映射（../../architecture_views/function_tree.yml, base_commit 5ab6e0b）──
+# 1 接入与安全网关 → 802 治理面板 API 接入
+# 2 认证与会话域 → 801 认证面板会话（不合并判定 N1：与 cloud JWT 独立）
+# 3 节点初始化域 → 603 初始化与恢复节点
+# 4 配置管理域 → 101 管理节点配置（M1）/ 102 预检配置资源冲突（M6）/ 103 管理远端配置镜像
+# 5 云端协同域 → 401 管理协议模板（M4）/ 402 渲染配置制品 / 501 管理订阅（M5）
+# 6 部署运维域 → 301 部署节点服务（M3）/ 302 管理容器生命周期
+# 7 系统设置域 → 804 管理系统设置（M10）
+# 8 自动同步引擎域 → 202 自动触发同步
+# 9 运行信息看板域 → 803 汇总运行信息看板（不合并判定 N2）
+# 10 前端交互域 → 805 守护前端交互
+# 11 交付与运行域 → 1004 启动管理面板服务（M9）；镜像构建与 GHCR 发布属部署面，
+#    由 deployment_view.md 与 ADR-006 覆盖，不纳入运行时功能树
