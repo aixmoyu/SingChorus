@@ -12,14 +12,14 @@ COPY packages/core/package.json packages/core/
 COPY packages/panel/package.json packages/panel/
 COPY packages/ctl/package.json packages/ctl/
 COPY packages/cloud/package.json packages/cloud/
-RUN pnpm install --frozen-lockfile --filter chorus-cloud...
+RUN pnpm install --frozen-lockfile --filter @chorus/cloud...
 
 COPY packages/cloud packages/cloud
 # 构建单文件 Node 入口，再用 pnpm deploy 裁剪出独立的生产依赖树。
 # --legacy：pnpm v10+ 默认要求 injected workspace，本包没有 workspace 依赖，
 # legacy 语义完全等价且更简单。
-RUN pnpm --filter chorus-cloud build:node \
- && pnpm --filter chorus-cloud deploy --prod --legacy /out
+RUN pnpm --filter @chorus/cloud build:node \
+ && pnpm --filter @chorus/cloud deploy --prod --legacy /out
 
 FROM node:22-slim
 WORKDIR /app

@@ -177,7 +177,7 @@ stateDiagram-v2
   - `subscriptions.path/token` UNIQUE（schema.ts:125,129）；`singbox_version` NOT NULL（版本绑定闭环数据基础）
   - FK 仅 protocol_instances/subscription→templates 声明；`PRAGMA foreign_keys` 尽力开启（schema.ts:35，部分环境不可用，引用完整性部分靠应用层前置检查 protocols.ts:128-140、nodes.ts:215-221）
   - SQL 字符串内禁写 `--` 注释（会进 sqlite_master 破坏 fingerprint 一致性，schema.ts:120-121 注释）
-- 升级路径：ALTER_TABLES 幂等补列（schema.ts:57-63），存量库与新建库行为对齐（42063a9 修复案例）。
+- 升级路径：ALTER_TABLES 幂等补列（schema.ts:57-70），存量库与新建库行为对齐（42063a9 与 client_configs server_config/params 补列均为修复案例）。
 
 ### 2.3 缓存策略
 

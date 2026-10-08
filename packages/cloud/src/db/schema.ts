@@ -62,6 +62,12 @@ const ALTER_TABLES = [
   "ALTER TABLE subscriptions ADD COLUMN singbox_version TEXT NOT NULL DEFAULT ''",
   // 同上（NOT NULL 必须带 DEFAULT）：存量行补默认类型 singbox，行为不变。
   "ALTER TABLE subscriptions ADD COLUMN type TEXT NOT NULL DEFAULT 'singbox'",
+  // 重装恢复功能（66c45c2）给 client_configs 加的列：远端旧表（9-21 前部署）
+  // 没有 server_config/params，CREATE TABLE IF NOT EXISTS 不会补列 → 配置同步
+  // INSERT/UPDATE 报 no such column → cloud 500 → core 重试后 CLOUD_UNREACHABLE。
+  // NOT NULL 在 ADD COLUMN 里必须带 DEFAULT（SQLite 限制），行为与全新库一致。
+  "ALTER TABLE client_configs ADD COLUMN server_config TEXT NOT NULL DEFAULT '{}'",
+  "ALTER TABLE client_configs ADD COLUMN params TEXT NOT NULL DEFAULT '{}'",
 ];
 
 // Design note: overall template bindings are split by scope —

@@ -35,7 +35,7 @@ pnpm dev:cloud    # cloud：wrangler dev (8787)
 | `pnpm test` | 运行所有包的测试 |
 | `pnpm typecheck` | 所有包 TS 类型检查 |
 | `pnpm --filter @chorus/panel build` | 只构建 panel |
-| `pnpm --filter chorus-cloud test` | 只跑 cloud 测试 |
+| `pnpm --filter @chorus/cloud test` | 只跑 cloud 测试 |
 
 > 注意：panel 引用的是 `@chorus/core` 的 **dist 产物**而非源码。首次 `pnpm install` 后或改完 core 后，需先 `pnpm --filter @chorus/core build`，否则 panel 服务端报 `ERR_MODULE_NOT_FOUND`（`pnpm build` 会自动处理构建顺序）。
 

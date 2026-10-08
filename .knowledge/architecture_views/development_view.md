@@ -66,8 +66,8 @@ SingChorus/
 |测试|`pnpm test`|`pnpm -r test`：core/cloud/panel/ctl 四包均定义 test|
 |类型检查|`pnpm typecheck`|`pnpm -r typecheck`：core/ctl/panel 有；**cloud 无该脚本，被跳过**|
 |静态检查|`pnpm lint`|**空转**：无任何包定义 lint 脚本，仓库也无 eslint/prettier 配置|
-|云端部署|`pnpm --filter chorus-cloud deploy` / `deploy:prod`|先 `wrangler d1 migrations apply DB --remote` 再 `wrangler deploy`（packages/cloud/package.json:8-9）|
-|云端 Node 版|`pnpm --filter chorus-cloud build:node && start:node`|esbuild 打包 + node 直跑（packages/cloud/package.json:19-20）|
+|云端部署|`pnpm --filter @chorus/cloud deploy` / `deploy:prod`|先 `wrangler d1 migrations apply DB --remote` 再 `wrangler deploy`（packages/cloud/package.json:8-9）|
+|云端 Node 版|`pnpm --filter @chorus/cloud build:node && start:node`|esbuild 打包 + node 直跑（packages/cloud/package.json:19-20）|
 |npm 发布|`pnpm publish:core` / `publish:panel` / `publish:ctl`|先 build 再 publish（根 package.json:17-19）|
 |CI 门禁|`pnpm --filter @chorus/core build && pnpm typecheck && pnpm test && pnpm build`|typecheck/test 任务均先构建 core（.github/workflows/ci.yml:20-21,33-34）|
 
@@ -124,7 +124,7 @@ graph LR
 |CI 门禁|.github/workflows/ci.yml|push/PR→main：typecheck、test 两 job 并行，build job `needs:[typecheck,test]`（ci.yml:36-38）|合并前全量回归|
 |镜像门禁|.github/workflows/docker-cloud.yml、docker-panel.yml|PR 仅 build 不推送；paths 过滤（panel 触发含 packages/core/**）|Dockerfile/依赖破坏提前暴露|
 
-**改动某模块该跑什么**：core 改动 → `pnpm --filter @chorus/core build && pnpm --filter @chorus/core test`，且因契约测试与 panel 路由转发测试的存在，还应跑 `pnpm --filter chorus-cloud test` 与 `pnpm --filter @chorus/panel test`；cloud 路由改动 → 对应 `tests/<路由>.spec.ts` + contract-core.spec.ts；panel server 改动 → `pnpm --filter @chorus/panel test`。
+**改动某模块该跑什么**：core 改动 → `pnpm --filter @chorus/core build && pnpm --filter @chorus/core test`，且因契约测试与 panel 路由转发测试的存在，还应跑 `pnpm --filter @chorus/cloud test` 与 `pnpm --filter @chorus/panel test`；cloud 路由改动 → 对应 `tests/<路由>.spec.ts` + contract-core.spec.ts；panel server 改动 → `pnpm --filter @chorus/panel test`。
 
 ## 4. 开发者入手路径
 
@@ -132,7 +132,7 @@ graph LR
 |-|-|-|
 |1. 定位入口|四包各有一个装配点：core 门面类 `ChorusCore`（packages/core/src/core.ts:26）、cloud 双入口共用同一 Hono app（packages/cloud/src/index.ts:15；packages/cloud/src/node/entry.ts:7-20）、panel Express 装配（packages/panel/server/app.ts:1-18）、ctl commander 注册（packages/ctl/src/index.ts:11-39）|`packages/*/src/index.ts`、`packages/panel/src/main.ts`|
 |2. 理解一个功能|docs/knowledge/subsystems/ 尚为空；以代码目录为索引：REST 功能看 `packages/cloud/src/routes/<域>.ts`，管理台页面看 `packages/panel/src/views/` + `server/routes/core/`，CLI 命令看 `packages/ctl/src/commands/`|grep 路由前缀（如 `/api/clients`）跨三包追踪|
-|3. 本地改起|cloud：`pnpm dev:cloud`（wrangler dev，本地 D1 在 .wrangler/state，wrangler.toml:6-8）或 Node 版 `pnpm --filter chorus-cloud dev:node`；panel：`pnpm dev:panel`（tsx watch 8088 + vite 5173，vite 将 /api 代理到 8088，vite.config.ts:23-27）；密钥：`cp .dev.vars.example .dev.vars`|端口：cloud 8787 / panel 8088 / vite 5173|
+|3. 本地改起|cloud：`pnpm dev:cloud`（wrangler dev，本地 D1 在 .wrangler/state，wrangler.toml:6-8）或 Node 版 `pnpm --filter @chorus/cloud dev:node`；panel：`pnpm dev:panel`（tsx watch 8088 + vite 5173，vite 将 /api 代理到 8088，vite.config.ts:23-27）；密钥：`cp .dev.vars.example .dev.vars`|端口：cloud 8787 / panel 8088 / vite 5173|
 |4. 验证|改哪包跑哪包 test + 全局 typecheck；core 改动先 build 再测下游|§2.1、§3 命令表|
 |5. 提交规范|无 CONTRIBUTING.md、无 git hooks 工具链；实践约定从 git log 可见：conventional commits（feat/fix/refactor/chore + 可选 scope），中文主题，跨包联动单提交|`git log --oneline`（如 7b1ef0e、contract-core.spec.ts:21 的「same commit」约定）|
 

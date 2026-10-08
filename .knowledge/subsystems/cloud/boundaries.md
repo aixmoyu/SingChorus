@@ -84,6 +84,7 @@ graph LR
 |-|-|-|-|
 |2026-09-18|KV Namespace 依赖整体移除，client_configs/sub_delivery_cache 迁入 D1；新增相关表与迁移文件|单存储统一（全局 ADR-001）；KV 适配器与迁移文件清理|commit 7b1ef0e、migrations/0001_init.sql、wrangler.toml:10|
 |2026-09-24|subscriptions 表 ALTER 增加 singbox_version NOT NULL DEFAULT ''，兼容 pre-v2.1 存量库|旧库升级后插入订阅报 no such column 500|commit 42063a9、db/schema.ts:57-63、tests/schema-upgrade.spec.ts|
+|2026-10-08|client_configs 表 ALTER 增加 server_config/params NOT NULL DEFAULT '{}'，兼容重装恢复功能（66c45c2，9-21）之前的存量库|节点配置同步 PUT /api/clients 报 no such column server_config → 500 → core 重试耗尽预算报 CLOUD_UNREACHABLE|db/schema.ts:57-70、tests/schema-upgrade.spec.ts|
 
 ## 全局功能树映射
 

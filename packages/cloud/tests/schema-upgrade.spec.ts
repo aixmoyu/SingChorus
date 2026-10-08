@@ -48,4 +48,40 @@ describe('legacy schema upgrade', () => {
     ).bind('t1').first<{ singbox_version: string }>();
     expect(row?.singbox_version).toBe('1.12.0');
   });
+
+  it('adds client_configs.server_config/params to a pre-rebind-recovery database', async () => {
+    const db = (env as any).DB as D1Database;
+
+    // Legacy shape from the KV→D1 migration (7b1ef0e): no server_config/params
+    // (both were added later by 66c45c2 rebind recovery).
+    await db.prepare('DROP TABLE IF EXISTS client_configs').run();
+    await db.prepare(`CREATE TABLE client_configs (
+      fingerprint TEXT NOT NULL,
+      name TEXT NOT NULL,
+      config TEXT NOT NULL,
+      protocol_type TEXT NOT NULL,
+      content_hash TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      deployed INTEGER NOT NULL DEFAULT 0,
+      port INTEGER,
+      tag TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (fingerprint, name)
+    )`).run();
+
+    resetDatabaseInitCache();
+    await initializeDatabase(db);
+
+    // The exact upsert INSERT the PUT /api/clients route performs must succeed.
+    await db.prepare(
+      `INSERT INTO client_configs (fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at)
+       VALUES ('fp1', 'n1', '{}', '{}', '{}', 'singbox', 'h', 1, 0, NULL, 'tag1', datetime('now'), datetime('now'))`,
+    ).run();
+    const row = await db.prepare(
+      'SELECT server_config, params FROM client_configs WHERE fingerprint = ?',
+    ).bind('fp1').first<{ server_config: string; params: string }>();
+    expect(JSON.parse(row!.server_config)).toEqual({});
+    expect(JSON.parse(row!.params)).toEqual({});
+  });
 });
