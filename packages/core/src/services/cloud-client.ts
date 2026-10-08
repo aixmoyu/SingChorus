@@ -329,11 +329,14 @@ export class CloudClient {
   async renderProtocol(
     protocolId: string,
     params: Record<string, unknown>,
+    singboxVersion?: string,
   ): Promise<{ server_config: Record<string, unknown>; client_config: Record<string, unknown> }> {
     const resp = await this.request({
       method: 'POST',
       path: '/api/render',
-      body: { protocolId, params },
+      // Cloud validates the protocol template's singbox_compat when a version
+      // is present — omitting it silently skips that check.
+      body: singboxVersion ? { protocolId, params, singboxVersion } : { protocolId, params },
     });
     if (resp.status !== 200) {
       const err = resp.data?.error || {};
@@ -345,8 +348,8 @@ export class CloudClient {
     };
   }
 
-  async generateConfig(type: string, params: Record<string, unknown>) {
-    return this.renderProtocol(type, params);
+  async generateConfig(type: string, params: Record<string, unknown>, singboxVersion?: string) {
+    return this.renderProtocol(type, params, singboxVersion);
   }
 
   /**

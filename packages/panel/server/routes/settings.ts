@@ -24,7 +24,7 @@ router.get('/', (_req, res) => {
 })
 
 /** 与 cloud 端 SINGBOX_VERSION_RE 一致；'' = 未设置（跟随模板默认）。 */
-const SINGBOX_VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
+export const SINGBOX_VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
 const settingsSchema = z.object({
   core_url: z.string().optional(),
@@ -116,6 +116,36 @@ router.post('/test-candidate', async (req, res) => {
   } catch (err) {
     const e = err as { message?: string }
     res.json({ reachable: false, error: e.message || 'Cloud unreachable' })
+  }
+})
+
+const candidateProbeSchema = z.object({
+  cloud_url: z.string().min(1).max(255),
+  cloud_token: z.string().min(1).max(255),
+})
+
+/**
+ * Fetch the sing-box version catalog from candidate cloud settings without
+ * persisting them — used by the setup wizard's version step, which runs
+ * before POST /api/init commits the connection.
+ */
+router.post('/candidate-singbox-versions', async (req, res) => {
+  const parsed = candidateProbeSchema.safeParse(req.body)
+  if (!parsed.success) {
+    res.json({ versions: [], error: 'cloud_url and cloud_token are required' })
+    return
+  }
+  const { cloud_url, cloud_token } = parsed.data
+  try {
+    const probe = new CloudClient({
+      cloud_url: cloud_url.trim().replace(/\/+$/, ''),
+      cloud_token,
+    })
+    const versions = await probe.getSingboxVersions()
+    res.json({ versions })
+  } catch (err) {
+    const e = err as { message?: string }
+    res.json({ versions: [], error: e.message || 'Cloud unreachable' })
   }
 })
 

@@ -18,6 +18,7 @@ const h = vi.hoisted(() => {
     lastFailures: [] as Array<{ name: string; message: string }>,
     appConfig: {} as Record<string, unknown>,
     getProtocols: undefined as ((noRetry?: boolean) => unknown) | undefined,
+    getSingboxVersions: undefined as (() => unknown) | undefined,
     getTemplates: undefined as ((role?: string) => unknown) | undefined,
     generateConfig: undefined as ((type: string, params: unknown) => unknown) | undefined,
     checkTagAvailable: undefined as ((tag: string) => unknown) | undefined,
@@ -52,6 +53,9 @@ vi.mock('@chorus/core', () => {
     constructor(public cfg: Record<string, unknown>) {}
     async getProtocols(noRetry?: boolean) {
       return h.behavior.getProtocols ? h.behavior.getProtocols(noRetry) : [{ id: 'p1' }]
+    }
+    async getSingboxVersions() {
+      return h.behavior.getSingboxVersions ? h.behavior.getSingboxVersions() : ['1.11.0']
     }
     async getTemplates(role?: string) {
       return h.behavior.getTemplates ? h.behavior.getTemplates(role) : [{ id: 't1' }]
@@ -337,7 +341,7 @@ describe('cloud/deploy routes against a stubbed core', () => {
       throw coreErr(503, 'CLOUD_UNREACHABLE', 'down')
     }
     const res = await authed(request(app).post('/api/init'), cookie)
-      .send({ node_name: 'n1', cloud_url: 'http://c.example', cloud_token: 't' })
+      .send({ node_name: 'n1', cloud_url: 'http://c.example', cloud_token: 't', singbox_version: '1.11.0' })
     expect(res.status).toBe(502)
     expect(res.body.error.code).toBe('CLOUD_UNREACHABLE')
   })
@@ -347,7 +351,7 @@ describe('cloud/deploy routes against a stubbed core', () => {
       throw coreErr(503, 'CLOUD_UNREACHABLE', 'down')
     }
     const res = await authed(request(app).post('/api/init'), cookie)
-      .send({ node_name: 'n1', cloud_url: 'http://c.example', cloud_token: 't', cloud_required: false })
+      .send({ node_name: 'n1', cloud_url: 'http://c.example', cloud_token: 't', cloud_required: false, singbox_version: '1.11.0' })
     expect(res.status).toBe(200)
     expect(res.body).toMatchObject({ initialized: true, cloud_ok: false })
     expect(res.body.cloud_error).toBe('down')
@@ -356,7 +360,7 @@ describe('cloud/deploy routes against a stubbed core', () => {
   it('completes the wizard: persists config, registers node, starts sync', async () => {
     h.behavior.getProtocols = undefined // probe succeeds
     const res = await authed(request(app).post('/api/init'), cookie)
-      .send({ node_name: 'n2', node_address: 'a.example', cloud_url: 'http://c.example', cloud_token: 'tok' })
+      .send({ node_name: 'n2', node_address: 'a.example', cloud_url: 'http://c.example', cloud_token: 'tok', singbox_version: '1.11.0' })
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ initialized: true, cloud_ok: true })
     expect(h.behavior.calls).toContain('registerNode')

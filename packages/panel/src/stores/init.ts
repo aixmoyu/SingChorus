@@ -14,6 +14,7 @@ export const useInitStore = defineStore('init', () => {
   const nodeAddress = ref('')
   const cloudUrl = ref('')
   const cloudTokenSet = ref(false)
+  const singboxVersion = ref('')
 
   async function fetchInit() {
     const res = await http.get('/init')
@@ -23,6 +24,7 @@ export const useInitStore = defineStore('init', () => {
     nodeAddress.value = res.data.node_address
     cloudUrl.value = res.data.cloud_url
     cloudTokenSet.value = Boolean(res.data.cloud_token)
+    singboxVersion.value = res.data.singbox_version || ''
   }
 
   async function completeInit(data: {
@@ -30,6 +32,7 @@ export const useInitStore = defineStore('init', () => {
     node_address: string
     cloud_url: string
     cloud_token: string
+    singbox_version: string
     cloud_required?: boolean
     previous_fingerprint?: string
   }): Promise<{ initialized: boolean; cloud_ok: boolean; cloud_error?: string; rebound?: boolean; restored?: number }> {
@@ -45,5 +48,15 @@ export const useInitStore = defineStore('init', () => {
     return res.data.reachable as boolean
   }
 
-  return { initialized, fingerprint, nodeName, nodeAddress, cloudUrl, cloudTokenSet, fetchInit, completeInit, testCloud }
+  /** Version catalog from candidate cloud settings (wizard step 4, pre-init). */
+  async function fetchCandidateVersions(url: string, token: string): Promise<string[]> {
+    const res = await http.post('/settings/candidate-singbox-versions', { cloud_url: url, cloud_token: token })
+    if (res.data.error) throw new Error(res.data.error)
+    return (res.data.versions ?? []) as string[]
+  }
+
+  return {
+    initialized, fingerprint, nodeName, nodeAddress, cloudUrl, cloudTokenSet, singboxVersion,
+    fetchInit, completeInit, testCloud, fetchCandidateVersions,
+  }
 })

@@ -5,6 +5,7 @@ import { isInitialized, loadConfig, updateConfig } from '../config.js'
 import { getCore, invalidateCore, triggerSync, ensureSyncTimer } from '../core-provider.js'
 import { toErrorEnvelope, toValidationError } from '../api-error.js'
 import { CloudClient } from '@chorus/core'
+import { SINGBOX_VERSION_RE } from './settings.js'
 
 /**
  * First-run initialization wizard state: password (via /api/auth/setup) plus
@@ -23,6 +24,8 @@ router.get('/', (_req, res) => {
     node_address: cfg.node_address,
     cloud_url: cfg.core_url,
     cloud_token: cfg.core_token ? 'set' : '',
+    // Re-running the wizard preselects the current pin in the version step.
+    singbox_version: core.getAppConfig().singbox_version || '',
   })
 })
 
@@ -34,6 +37,10 @@ const initSchema = z.object({
   cloud_url: z.string().min(1).max(255),
   cloud_token: z.string().min(1).max(255),
   cloud_required: z.boolean().default(true),
+  // Required at init: the pinned version gates protocol-template filtering
+  // (cloud GET /api/protocols?singbox_version=) and render compat checks —
+  // without it every template shows up regardless of singbox_compat.
+  singbox_version: z.string().regex(SINGBOX_VERSION_RE),
   // Reinstall recovery: the fingerprint recorded before the reinstall (or
   // copied off another node). The cloud rebinds the old node's configs to
   // this install's fingerprint so they can sync back down.
@@ -46,7 +53,7 @@ router.post('/', async (req, res) => {
     res.status(422).json(toErrorEnvelope('VALIDATION_ERROR', toValidationError(parsed.error)))
     return
   }
-  const { node_name, node_address, cloud_url, cloud_token, cloud_required, previous_fingerprint } = parsed.data
+  const { node_name, node_address, cloud_url, cloud_token, cloud_required, singbox_version, previous_fingerprint } = parsed.data
   const trimmedUrl = cloud_url.trim().replace(/\/+$/, '')
 
   // Verify the cloud accepts this token before committing the setup.
@@ -65,6 +72,22 @@ router.post('/', async (req, res) => {
     if (cloud_required) {
       res.status(502).json(toErrorEnvelope('CLOUD_UNREACHABLE', cloudError))
       return
+    }
+  }
+
+  // The wizard only offers catalog versions, but re-verify server-side so a
+  // stale client can't pin a version the cloud no longer offers.
+  if (cloudOk) {
+    try {
+      const catalog = await probe.getSingboxVersions()
+      if (catalog.length > 0 && !catalog.includes(singbox_version)) {
+        res.status(400).json(
+          toErrorEnvelope('SBX_VERSION_NOT_OFFERED', `sing-box version '${singbox_version}' is not offered (available: ${catalog.join(', ')})`),
+        )
+        return
+      }
+    } catch {
+      // Catalog fetch is best-effort; the probe already proved reachability.
     }
   }
 
@@ -106,7 +129,11 @@ router.post('/', async (req, res) => {
     cloud_token,
     node_name,
     node_address,
+    // Pinned here so the cached core instance is rebuilt with the new version
+    // snapshot (same contract as the settings route's singbox_version write).
+    singbox_version,
   })
+  invalidateCore()
 
   // Register with the cloud immediately (best-effort) and start background sync.
   try {

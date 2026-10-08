@@ -128,10 +128,19 @@ export class ChorusCore {
    * resolveAndValidate gives user values precedence over generators.
    */
   async generateConfig(type: string, params: Record<string, unknown>) {
+    // Pin the local sing-box version onto every render so cloud's compat
+    // validation fires at preview time (same filter as deploy/subscriptions).
+    // Unset pin keeps the 2-arg call — cloud then skips compat validation.
+    const version = this.getAppConfig().singbox_version || undefined;
+    const withTag = { ...params, tag: composeTag(this.getIdentity().name, type) };
     if (!params.tag) {
-      return this.cloud.generateConfig(type, { ...params, tag: composeTag(this.getIdentity().name, type) });
+      return version
+        ? this.cloud.generateConfig(type, withTag, version)
+        : this.cloud.generateConfig(type, withTag);
     }
-    return this.cloud.generateConfig(type, params);
+    return version
+      ? this.cloud.generateConfig(type, params, version)
+      : this.cloud.generateConfig(type, params);
   }
 
   async generateAndAdd(name: string, node: string, type: string, params: Record<string, unknown>, enabled?: boolean): Promise<ConfigEntry> {

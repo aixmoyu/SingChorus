@@ -124,6 +124,18 @@ describe('ChorusCore 基础编排', () => {
     core.updateAppConfig({ node_name: '' });
   });
 
+  it('generateConfig：设置 pin 后自动携带 singboxVersion；清空后不携带', async () => {
+    cloud.generateConfig.mockResolvedValue({ server_config: {}, client_config: {} });
+    // pin 非空 → 第三参透传，cloud /api/render 据此做 compat 校验
+    core.updateAppConfig({ singbox_version: '1.11.0' });
+    await core.generateConfig('hysteria2', { tag: 't1', domain: 'a.com' });
+    expect(cloud.generateConfig).toHaveBeenLastCalledWith('hysteria2', { tag: 't1', domain: 'a.com' }, '1.11.0');
+    // pin 为空 → 保持两参调用（cloud 跳过校验的既有契约）
+    core.updateAppConfig({ singbox_version: '' });
+    await core.generateConfig('hysteria2', { tag: 't2' });
+    expect(cloud.generateConfig).toHaveBeenLastCalledWith('hysteria2', { tag: 't2' });
+  });
+
   it('getIdentity：无 node_name 时回退 node-<fp8>；isInitialized 需要 token+node_name', () => {
     const id = core.getIdentity();
     expect(id.fingerprint).toBe(core.getFingerprint());

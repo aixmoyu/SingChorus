@@ -12,6 +12,7 @@
           <n-step title="Admin Password" />
           <n-step title="Node Identity" />
           <n-step title="Cloud Connection" />
+          <n-step title="sing-box Version" />
         </n-steps>
 
         <!-- Step 1: password (only on true first run) -->
@@ -70,31 +71,59 @@
         <!-- Step 3: cloud connection -->
         <template v-if="step === 3">
           <div class="step-body">
+            <n-form :label-placement="labelPlacement" label-width="140">
+              <n-form-item label="Cloud URL">
+                <CloudUrlInput v-model:value="cloudUrl" placeholder="cloud.example.com" />
+              </n-form-item>
+              <n-form-item label="Cloud Token">
+                <n-input v-model:value="cloudToken" type="password" show-password-on="click" placeholder="Cloud API token" />
+              </n-form-item>
+            </n-form>
+            <div class="form-actions">
+              <n-button @click="step = 2">Back</n-button>
+              <n-button @click="testCloud" :loading="testing">Test Connection</n-button>
+              <n-button type="primary" :disabled="!cloudUrl.trim() || !cloudToken.trim()" @click="step = 4">Next</n-button>
+            </div>
+            <n-alert v-if="testResult === true" type="success" class="step-alert">Connection successful</n-alert>
+            <n-alert v-if="testResult === false" type="error" class="step-alert">Connection failed: {{ testError }}</n-alert>
+          </div>
+        </template>
+
+        <!-- Step 4: sing-box version -->
+        <template v-if="step === 4">
+          <div class="step-body">
             <form @submit.prevent="finish">
               <n-form :label-placement="labelPlacement" label-width="140">
-                <n-form-item label="Cloud URL">
-                  <CloudUrlInput v-model:value="cloudUrl" placeholder="cloud.example.com" />
-                </n-form-item>
-                <n-form-item label="Cloud Token">
-                  <n-input v-model:value="cloudToken" type="password" show-password-on="click" placeholder="Cloud API token" />
+                <n-form-item label="sing-box Version">
+                  <n-select
+                    v-model:value="singboxVersion"
+                    :options="versionOptions"
+                    :loading="versionsLoading"
+                    placeholder="Select the sing-box version this node runs"
+                    filterable
+                  />
+                  <template #feedback>
+                    Protocol templates are filtered and validated against this version — same as deploy and subscriptions.
+                  </template>
                 </n-form-item>
               </n-form>
               <div class="form-actions">
-                <n-button @click="step = 2">Back</n-button>
-                <n-button @click="testCloud" :loading="testing">Test Connection</n-button>
-                <n-button type="primary" attr-type="submit" :loading="finishing" :disabled="!cloudUrl.trim() || !cloudToken.trim()">
+                <n-button @click="step = 3">Back</n-button>
+                <n-button @click="loadVersions" :loading="versionsLoading">Refresh</n-button>
+                <n-button type="primary" attr-type="submit" :loading="finishing" :disabled="!singboxVersion">
                   Finish Setup
                 </n-button>
               </div>
             </form>
-            <n-alert v-if="testResult === true" type="success" class="step-alert">Connection successful</n-alert>
-            <n-alert v-if="testResult === false" type="error" class="step-alert">Connection failed: {{ testError }}</n-alert>
+            <n-alert v-if="versionsError" type="error" class="step-alert">
+              Failed to load version catalog: {{ versionsError }}
+            </n-alert>
             <n-alert v-if="finishError" type="error" class="step-alert">{{ finishError }}</n-alert>
           </div>
         </template>
 
         <!-- Done -->
-        <template v-if="step === 4">
+        <template v-if="step === 5">
           <n-result status="success" title="Setup Complete" description="This node is registered with the cloud. Configs will sync automatically.">
             <template #footer>
               <n-button type="primary" @click="goDashboard">Go to Dashboard</n-button>
@@ -112,10 +141,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  NSteps, NStep, NForm, NFormItem, NInput, NButton, NAlert, NResult,
+  NSteps, NStep, NForm, NFormItem, NInput, NButton, NAlert, NResult, NSelect,
 } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useInitStore } from '@/stores/init'
@@ -148,6 +177,11 @@ const finishing = ref(false)
 const finishError = ref('')
 const restoredInfo = ref<{ rebound: boolean; restored: number } | null>(null)
 
+const singboxVersion = ref('')
+const versionOptions = ref<Array<{ label: string; value: string }>>([])
+const versionsLoading = ref(false)
+const versionsError = ref('')
+
 onMounted(async () => {
   // Fresh server truth, never the store's optimistic state: this page issues
   // authenticated calls (/api/init) on mount, so a stale isAuthenticated
@@ -165,9 +199,36 @@ onMounted(async () => {
     nodeName.value = init.nodeName
     nodeAddress.value = init.nodeAddress
     cloudUrl.value = init.cloudUrl
+    // Preselect the current pin when re-running the wizard.
+    singboxVersion.value = init.singboxVersion
   } catch { /* wizard still usable with defaults */ }
   if (!auth.firstRun) step.value = 2
 })
+
+// Entering the version step needs the catalog from the candidate cloud
+// settings entered in step 3 — fetch lazily so the probe uses fresh input.
+watch(step, (s) => {
+  if (s === 4 && versionOptions.value.length === 0) void loadVersions()
+})
+
+async function loadVersions() {
+  versionsLoading.value = true
+  versionsError.value = ''
+  try {
+    const versions = await init.fetchCandidateVersions(cloudUrl.value.trim(), cloudToken.value.trim())
+    versionOptions.value = versions.map((v) => ({ label: v, value: v }))
+    if (versions.length === 0) {
+      versionsError.value = 'the cloud returned an empty version catalog'
+    } else if (singboxVersion.value && !versions.includes(singboxVersion.value)) {
+      // Current pin no longer offered — force an explicit re-selection.
+      singboxVersion.value = ''
+    }
+  } catch (e: unknown) {
+    versionsError.value = extractApiError(e, 'Failed to load versions').message
+  } finally {
+    versionsLoading.value = false
+  }
+}
 
 async function setPassword() {
   passwordError.value = ''
@@ -213,13 +274,14 @@ async function finish() {
       node_address: nodeAddress.value.trim(),
       cloud_url: cloudUrl.value.trim(),
       cloud_token: cloudToken.value.trim(),
+      singbox_version: singboxVersion.value,
       ...(previousFingerprint.value.trim() ? { previous_fingerprint: previousFingerprint.value.trim() } : {}),
     })
     restoredInfo.value = previousFingerprint.value.trim()
       ? { rebound: res.rebound === true, restored: res.restored ?? 0 }
       : null
     auth.initialized = true
-    step.value = 4
+    step.value = 5
   } catch (e: unknown) {
     finishError.value = extractApiError(e, 'Setup failed').message
   } finally {
