@@ -1,0 +1,178 @@
+{
+  "log": {
+    "level": "info",
+    "output": "/data/sing-box.log",
+    "timestamp": true
+  },
+  "ntp": {
+    "enabled": true,
+    "interval": "30m0s",
+    "server": "ntp.aliyun.com",
+    "server_port": 123
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "google",
+        "server": "8.8.8.8"
+      },
+      {
+        "tag": "dns-local",
+        "type": "local"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": "geosite-category-ads-all",
+        "action": "predefined",
+        "rcode": "NOERROR"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "server": "google",
+        "rewrite_ttl": 100
+      }
+    ],
+    "final": "google",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    "{{ protocols }}"
+  ],
+  "http_clients": [
+    {
+      "tag": "rule-set"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "cf-wg-ep",
+      "mtu": 1280,
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8dd5:fe05:9117:314:bb36/128"
+      ],
+      "private_key": "KJfqcSip+Bn6I9iKBC9NkfNUXLNr8T6FCzaKx1ZU4ko=",
+      "peers": [
+        {
+          "address": "engage.cloudflareclient.com",
+          "port": 2408,
+          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ]
+        }
+      ]
+    }
+  ],
+  "route": {
+    "default_domain_resolver": "google",
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "rule_set": "geosite-category-ads-all",
+        "action": "reject"
+      },
+      {
+        "ip_is_private": true,
+        "action": "reject"
+      },
+      {
+        "rule_set": [
+          "geoip-cn",
+          "geosite-cn"
+        ],
+        "outbound": "cf-wg-ep"
+      },
+      {
+        "rule_set": [
+          "geosite-disney",
+          "geoip-netflix",
+          "geosite-netflix"
+        ],
+        "outbound": "cf-wg-ep"
+      },
+      {
+        "rule_set": [
+          "geosite-openai",
+          "geosite-anthropic"
+        ],
+        "outbound": "cf-wg-ep"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-category-ads-all",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-openai",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs"
+      },
+      {
+        "tag": "geosite-anthropic",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/anthropic.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-disney",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/disney.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-netflix",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/netflix.srs"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-netflix",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netflix.srs"
+      }
+    ],
+    "final": "direct",
+    "auto_detect_interface": true,
+    "default_http_client": "rule-set"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/data/cache.db"
+    }
+  }
+}

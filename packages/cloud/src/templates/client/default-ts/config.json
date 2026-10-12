@@ -1,0 +1,7 @@
+{
+  "$schema": "../../overall-config.schema.json",
+  "name": "Default Client Config (Tailscale)",
+  "description": "Default client overall template with a built-in Tailscale endpoint (ts-ep)",
+  "singbox_compat": ">=1.14.0 <1.16.0",
+  "params": []
+}

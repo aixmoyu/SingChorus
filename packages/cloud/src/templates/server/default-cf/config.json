@@ -1,0 +1,7 @@
+{
+  "$schema": "../../overall-config.schema.json",
+  "name": "Default Server Config (Cloudflare WARP)",
+  "description": "Default server overall template with a Cloudflare WARP WireGuard endpoint (no routing rules yet)",
+  "singbox_compat": ">=1.14.0 <1.16.0",
+  "params": []
+}

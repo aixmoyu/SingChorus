@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { initializeDatabase, resetDatabaseInitCache } from '../src/db/schema';
+import { ensureDatabaseInitialized, initializeDatabase, resetDatabaseInitCache } from '../src/db/schema';
+import { SEED_TEMPLATE_IDS } from './seed-baseline';
 
 /**
  * Legacy-database upgrade path (panel-502 regression, 2026-09-24): a D1
@@ -83,5 +84,35 @@ describe('legacy schema upgrade', () => {
     ).bind('fp1').first<{ server_config: string; params: string }>();
     expect(JSON.parse(row!.server_config)).toEqual({});
     expect(JSON.parse(row!.params)).toEqual({});
+  });
+
+  /**
+   * Seed refresh on an existing database (2026-10-12 regression):
+   * refreshSeedTemplates used to UPDATE only, so seed ids added in a newer
+   * deploy were silently never inserted — prod kept missing the new template
+   * after `deploy:prod`. The refresh path must upsert (missing seed rows
+   * come back, stale ones are overwritten, custom rows survive).
+   */
+  it('refresh re-inserts seed ids missing from an existing database', async () => {
+    const db = (env as any).DB as D1Database;
+    await ensureDatabaseInitialized(db);
+
+    const missingId = SEED_TEMPLATE_IDS[SEED_TEMPLATE_IDS.length - 1];
+    const staleId = SEED_TEMPLATE_IDS[0];
+    await db.prepare('DELETE FROM templates WHERE id = ?').bind(missingId).run();
+    await db.prepare('UPDATE templates SET name = ? WHERE id = ?').bind('stale-name', staleId).run();
+    await db.prepare(
+      `INSERT INTO templates (id, category, name, params) VALUES ('custom-x', 'overall-client', 'Custom', '[]')`,
+    ).run();
+
+    resetDatabaseInitCache();
+    await ensureDatabaseInitialized(db);
+
+    const missing = await db.prepare('SELECT id FROM templates WHERE id = ?').bind(missingId).first();
+    expect(missing).not.toBeNull();
+    const stale = await db.prepare('SELECT name FROM templates WHERE id = ?').bind(staleId).first<{ name: string }>();
+    expect(stale!.name).not.toBe('stale-name');
+    const custom = await db.prepare('SELECT id FROM templates WHERE id = ?').bind('custom-x').first();
+    expect(custom).not.toBeNull();
   });
 });

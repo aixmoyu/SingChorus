@@ -1,33 +1,23 @@
 /**
  * 种子数据的动态基线：测试所需的版本号、版本目录、compat 范围一律从模板
- * config.json（db/seed.ts 的同一数据源）推导，禁止在测试里硬编码。
+ * 注册表（templates/registry.ts，db/seed.ts 的同一数据源）推导，禁止在
+ * 测试里硬编码。
  *
  * 理由（2026-09-24 复盘）：sing-box 版本目录与 compat 范围会随迭代频繁演进，
  * 硬编码意味着「改一次种子就要同步改一批测试」。测试应钉死机制（过滤、
  * 校验、回落、排除），而非钉死随时会变的数据。
  */
-import dockerConfig from '../src/templates/docker/default/config.json';
-import hysteria2Config from '../src/templates/protocols/hysteria2/config.json';
-import vlessConfig from '../src/templates/protocols/vless-reality-vision/config.json';
-import serverConfig from '../src/templates/server/default/config.json';
-import clientConfig from '../src/templates/client/default/config.json';
-import { SEED_TEMPLATES } from '../src/db/seed';
+import { templateSeeds, SEED_TEMPLATES } from '../src/templates/registry';
 
 interface Param { name: string; default?: string; enum?: string[] }
-interface Cfg { singbox_compat?: string; params?: Param[] }
 
-const cfg = (c: unknown): Cfg => c as Cfg;
+/** 各种子模板的 singbox_compat 原文，按模板 id 索引（直接取种子行的列，
+ * 新增种子自动进入，无需改本文件）。 */
+export const SEED_COMPAT: Record<string, string> = Object.fromEntries(
+  templateSeeds.map((t) => [t.id, t.singbox_compat ?? '*']),
+);
 
-/** 各种子模板的 singbox_compat 原文，按模板 id 索引。 */
-export const SEED_COMPAT: Record<string, string> = {
-  hysteria2: cfg(hysteria2Config).singbox_compat ?? '*',
-  'vless-reality-vision': cfg(vlessConfig).singbox_compat ?? '*',
-  'server-default': cfg(serverConfig).singbox_compat ?? '*',
-  'client-default': cfg(clientConfig).singbox_compat ?? '*',
-  'docker-default': cfg(dockerConfig).singbox_compat ?? '*',
-};
-
-/** 种子协议模板 id（从 seed.ts 的结构摘要推导，种子演进无需改测试）。 */
+/** 种子协议模板 id（从注册表的结构摘要推导，种子演进无需改测试）。 */
 export const SEED_PROTOCOL_IDS = SEED_TEMPLATES.filter((t) => t.category === 'protocol').map((t) => t.id);
 
 /** 全部种子模板 id（种子总条数断言用）。 */
@@ -38,7 +28,10 @@ export const SEED_CATEGORY_IDS = (category: string) =>
   SEED_TEMPLATES.filter((t) => t.category === category).map((t) => t.id);
 
 /** docker-default 的 singbox_version param —— 版本目录的唯一来源（设计 §13.3）。 */
-const dockerParam = cfg(dockerConfig).params?.find((p) => p.name === 'singbox_version');
+const dockerSeed = templateSeeds.find((t) => t.id === 'docker-default');
+const dockerParam = dockerSeed
+  ? (JSON.parse(dockerSeed.params) as Param[]).find((p) => p.name === 'singbox_version')
+  : undefined;
 
 // --- 极简 semver 工具（x.y.z 数值比较，测试够用） ---
 
