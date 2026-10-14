@@ -42,6 +42,26 @@
       </div>
     </n-card>
 
+    <n-card v-if="form" title="Route Rules">
+      <div class="section">
+        <n-input
+          v-model:value="routeRulesText"
+          type="textarea"
+          :rows="4"
+          class="mono-input"
+          aria-label="Route rules JSON"
+          placeholder='[{"domain": ["example.com"], "outbound": "direct"}]'
+          :disabled="isRemote"
+        />
+        <div class="form-actions">
+          <n-button size="small" @click="formatJson('rules')" :disabled="isRemote">Format</n-button>
+        </div>
+        <n-text depth="3" style="font-size: 12px">
+          Optional — a JSON array of sing-box route rules spliced into the subscription's client config. Empty = none.
+        </n-text>
+      </div>
+    </n-card>
+
     <n-card v-if="form" title="Server Config">
       <div class="section">
         <n-input
@@ -90,7 +110,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
-import { NCard, NForm, NFormItem, NInput, NSwitch, NButton, NSpin, NTag, NResult, useMessage, useDialog } from 'naive-ui'
+import { NCard, NForm, NFormItem, NInput, NSwitch, NButton, NSpin, NTag, NText, NResult, useMessage, useDialog } from 'naive-ui'
 import { useConfigStore } from '@/stores/config'
 import { useTemplateStore } from '@/stores/template'
 import { extractApiError } from '@/lib/http'
@@ -117,6 +137,7 @@ const isRemote = computed(() => Boolean(route.query.fingerprint))
 const serverText = ref('{}')
 const clientText = ref('{}')
 const paramsText = ref('{}')
+const routeRulesText = ref('[]')
 
 const dirty = computed(() => {
   if (isRemote.value) return false
@@ -127,32 +148,44 @@ const dirty = computed(() => {
   if (JSON.stringify(original.value.server_config ?? {}, null, 2) !== serverText.value) return true
   if (JSON.stringify(original.value.client_config ?? {}, null, 2) !== clientText.value) return true
   if (JSON.stringify(original.value.params ?? {}, null, 2) !== paramsText.value) return true
+  if (JSON.stringify(original.value.route_rules ?? [], null, 2) !== routeRulesText.value) return true
   return false
 })
 
 /** Parse a textarea's JSON, surfacing invalid input to the user. */
-function parseJsonField(side: 'server' | 'client' | 'params'): Record<string, unknown> | null {
-  const text = side === 'server' ? serverText.value : side === 'client' ? clientText.value : paramsText.value
+function parseJsonField(side: 'server' | 'client' | 'params' | 'rules'): Record<string, unknown> | unknown[] | null {
+  const text = side === 'server' ? serverText.value : side === 'client' ? clientText.value : side === 'params' ? paramsText.value : routeRulesText.value
   try {
-    return JSON.parse(text) as Record<string, unknown>
+    return JSON.parse(text)
   } catch (e) {
-    message.error(`${side === 'params' ? 'Params' : side === 'server' ? 'Server config' : 'Client config'} is not valid JSON: ${(e as Error).message}`)
+    message.error(`${side === 'params' ? 'Params' : side === 'server' ? 'Server config' : side === 'client' ? 'Client config' : 'Route rules'} is not valid JSON: ${(e as Error).message}`)
     return null
   }
 }
 
-function formatJson(side: 'server' | 'client' | 'params') {
-  const text = side === 'server' ? serverText : side === 'client' ? clientText : paramsText
+/** Route rules must be an array of rule objects (or empty = none). */
+function parseRouteRules(): unknown[] | null {
+  const parsed = parseJsonField('rules')
+  if (!parsed) return null
+  if (!Array.isArray(parsed) || parsed.some((r) => r === null || typeof r !== 'object' || Array.isArray(r))) {
+    message.error('Route rules must be a JSON array of rule objects.')
+    return null
+  }
+  return parsed
+}
+
+function formatJson(side: 'server' | 'client' | 'params' | 'rules') {
+  const text = side === 'server' ? serverText : side === 'client' ? clientText : side === 'params' ? paramsText : routeRulesText
   try {
     text.value = JSON.stringify(JSON.parse(text.value), null, 2)
   } catch {
-    message.warning(`${side === 'params' ? 'Params' : side === 'server' ? 'Server config' : 'Client config'} is not valid JSON — cannot format.`)
+    message.warning(`${side === 'params' ? 'Params' : side === 'server' ? 'Server config' : side === 'client' ? 'Client config' : 'Route rules'} is not valid JSON — cannot format.`)
   }
 }
 
 async function regenerate() {
   if (!original.value || !form.value) return
-  const params = parseJsonField('params')
+  const params = parseJsonField('params') as Record<string, unknown> | null
   if (!params) return
   regenerating.value = true
   try {
@@ -171,6 +204,7 @@ function syncForm() {
   serverText.value = JSON.stringify(original.value.server_config ?? {}, null, 2)
   clientText.value = JSON.stringify(original.value.client_config, null, 2)
   paramsText.value = JSON.stringify(original.value.params ?? {}, null, 2)
+  routeRulesText.value = JSON.stringify(original.value.route_rules ?? [], null, 2)
 }
 
 function revert() {
@@ -180,14 +214,15 @@ function revert() {
 async function save() {
   if (!original.value || !form.value) return
   // Reject invalid JSON up front instead of silently dropping the field.
-  const server_config = parseJsonField('server')
-  const client_config = parseJsonField('client')
-  const params = parseJsonField('params')
-  if (!server_config || !client_config || !params) return
+  const server_config = parseJsonField('server') as Record<string, unknown> | null
+  const client_config = parseJsonField('client') as Record<string, unknown> | null
+  const params = parseJsonField('params') as Record<string, unknown> | null
+  const route_rules = parseRouteRules()
+  if (!server_config || !client_config || !params || !route_rules) return
 
   saving.value = true
   try {
-    const data: Partial<ConfigEntry> = { enabled: form.value.enabled, server_config, client_config, params }
+    const data: Partial<ConfigEntry> = { enabled: form.value.enabled, server_config, client_config, params, route_rules }
 
     const updated = await configStore.updateConfig(original.value.name, data)
     original.value = updated

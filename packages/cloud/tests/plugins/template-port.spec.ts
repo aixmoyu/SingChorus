@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PluginRegistry, resetRegistryCache } from '../../src/engine/registry';
 import serverTemplate from '../../src/templates/server/default/template.json';
 import clientTemplate from '../../src/templates/client/default/template.json';
+import clientTsTemplate from '../../src/templates/client/default-ts/template.json';
 
 function makeMockDB(templateRows: any[]): D1Database {
   return {
@@ -142,5 +143,43 @@ describe('template port verification', () => {
     expect(result.outbounds).toHaveLength(T(clientTemplate).outbounds.length - splicedEntryCount(T(clientTemplate)));
     const json = JSON.stringify(result);
     expect(json).not.toContain('{{');
+  });
+
+  // {{ route_rules }} splice point: per-instance custom rules are spread into
+  // route.rules (array semantics → no comma handling needed); absent/empty
+  // rules remove the placeholder element entirely.
+  it('renderClientOverall splices route_rules into route.rules and drops the placeholder when empty', async () => {
+    const db = makeMockDB([mkRow('client-default-ts', 'overall-client', clientTsTemplate)]);
+    const reg = new PluginRegistry(db);
+    await reg.loadAll();
+
+    // No rules: the placeholder element disappears from route.rules.
+    const bare: any = await reg.renderClientOverall(
+      [{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' } }],
+      'client-default-ts',
+      {},
+    );
+    const templateRuleCount = T(clientTsTemplate).route.rules.length - 1; // minus the placeholder element
+    expect(bare.route.rules).toHaveLength(templateRuleCount);
+    expect(JSON.stringify(bare)).not.toContain('route_rules');
+
+    // With rules: spread in at the placeholder position, before template rules.
+    const rule = { domain: ['example.com'], outbound: 'direct' };
+    const rule2 = { domain_suffix: ['.example.org'], outbound: 'proxy' };
+    const withRules: any = await reg.renderClientOverall(
+      [
+        { id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' }, routeRules: [rule] },
+        { id: 'i2', serverConfig: {}, clientConfig: { tag: 'proxy-b' }, routeRules: [rule2] },
+      ],
+      'client-default-ts',
+      {},
+    );
+    expect(withRules.route.rules).toHaveLength(templateRuleCount + 2);
+    expect(withRules.route.rules).toContainEqual(rule);
+    expect(withRules.route.rules).toContainEqual(rule2);
+    expect(withRules.route.rules[0]).toEqual(rule);
+    expect(withRules.route.rules[1]).toEqual(rule2);
+    // template rules preserved after the spliced ones
+    expect(withRules.route.rules.slice(2)).toEqual(T(clientTsTemplate).route.rules.slice(1));
   });
 });

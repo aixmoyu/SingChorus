@@ -14,16 +14,27 @@ export function extractConfigPort(entry: { server_config?: Record<string, unknow
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
 }
 
-function makeEntry(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, enabled?: boolean, singboxVersion?: string): ConfigEntry {
+function makeEntry(
+  name: string,
+  node: string,
+  type: string,
+  server: Record<string, unknown>,
+  client: Record<string, unknown>,
+  params: Record<string, unknown>,
+  enabled?: boolean,
+  singboxVersion?: string,
+  routeRules?: unknown[],
+): ConfigEntry {
   return {
     name, node, type,
     enabled: enabled ?? true,
     deployed: false,
     synced: false,
-    content_hash: computeContentHash(server, client, params),
+    content_hash: computeContentHash(server, client, params, routeRules ?? []),
     server_config: server,
     client_config: client,
     params,
+    ...(routeRules !== undefined ? { route_rules: routeRules } : {}),
     created_at: now(),
     updated_at: now(),
     ...(singboxVersion !== undefined ? { singbox_version: singboxVersion } : {}),
@@ -38,20 +49,20 @@ export class ConfigManager {
     return this.store.loadAppConfig().singbox_version || '';
   }
 
-  add(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): ConfigEntry {
+  add(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, routeRules?: unknown[]): ConfigEntry {
     if (!name) throw new AppError(ERRORS.CFG_NAME_REQUIRED.code, ERRORS.CFG_NAME_REQUIRED.message, ERRORS.CFG_NAME_REQUIRED.status);
     if (this.store.configExists(name)) throw new AppError(ERRORS.CFG_DUPLICATE.code, ERRORS.CFG_DUPLICATE.message, ERRORS.CFG_DUPLICATE.status);
     this.assertNoPortConflict(name, { server_config: server, client_config: client });
-    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion());
+    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion(), routeRules);
     this.store.saveConfig(entry);
     return entry;
   }
 
   /** Upsert an entry built from rendered configs (used by generateAndAdd —
    *  no duplicate check: re-generating the same config overwrites it). */
-  upsert(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): ConfigEntry {
+  upsert(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, routeRules?: unknown[]): ConfigEntry {
     if (!name) throw new AppError(ERRORS.CFG_NAME_REQUIRED.code, ERRORS.CFG_NAME_REQUIRED.message, ERRORS.CFG_NAME_REQUIRED.status);
-    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion());
+    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion(), routeRules);
     this.store.saveConfig(entry);
     return entry;
   }
@@ -68,6 +79,7 @@ export class ConfigManager {
     server_config: Record<string, unknown>
     client_config: Record<string, unknown>
     params: Record<string, unknown>
+    route_rules?: unknown[]
     enabled?: boolean
   }): 'restored' | 'skipped' {
     if (this.store.configExists(input.name)) return 'skipped';
@@ -76,6 +88,8 @@ export class ConfigManager {
       input.name, '', input.type,
       input.server_config, input.client_config, input.params,
       input.enabled ?? true,
+      undefined,
+      input.route_rules,
     );
     this.store.saveConfig(entry);
     this.markSynced(input.name);
@@ -89,12 +103,13 @@ export class ConfigManager {
     // 原值完全一致（含缺失状态），否则整个更新被拒绝。
     this.assertTagUnchanged('params.tag', existing.params?.tag, merged.params?.tag);
     this.assertTagUnchanged('client_config.tag', existing.client_config?.tag, merged.client_config?.tag);
-    if (data.server_config || data.client_config || data.params) {
+    if (data.server_config || data.client_config || data.params || data.route_rules) {
       this.assertNoPortConflict(name, merged);
       const nextHash = computeContentHash(
         merged.server_config,
         merged.client_config,
         merged.params,
+        merged.route_rules ?? [],
       );
       // 内容真变更才失效同步/部署状态：键序不同但内容相同（hash 一致）的写入
       // 不应触发冗余重传与订阅下线。
@@ -201,7 +216,7 @@ export class ConfigManager {
   markSynced(name: string) {
     const entry = this.get(name);
     entry.synced = true;
-    entry.content_hash = computeContentHash(entry.server_config, entry.client_config, entry.params);
+    entry.content_hash = computeContentHash(entry.server_config, entry.client_config, entry.params, entry.route_rules ?? []);
     entry.updated_at = now();
     this.store.saveConfig(entry);
   }

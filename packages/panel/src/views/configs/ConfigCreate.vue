@@ -71,6 +71,23 @@
                 />
               </template>
             </n-form-item>
+            <n-form-item
+              label="Custom Route Rules"
+              :show-require-mark="false"
+              :validation-status="routeRulesError ? 'error' : undefined"
+            >
+              <n-input
+                v-model:value="routeRulesText"
+                type="textarea"
+                :rows="4"
+                class="mono-input"
+                aria-label="Custom route rules JSON"
+                placeholder='[{"domain": ["example.com"], "outbound": "direct"}]'
+              />
+              <template #feedback>
+                {{ routeRulesError || 'Optional — a JSON array of sing-box route rules spliced into the subscription\'s client config. Leave empty for none.' }}
+              </template>
+            </n-form-item>
           </n-form>
           <div class="form-actions">
             <n-button @click="step = 1">Back</n-button>
@@ -126,6 +143,11 @@ const preview = ref<GenerateResponse>({ server_config: {}, client_config: {} })
 const submitting = ref(false)
 const generating = ref(false)
 
+/** Optional custom route rules (JSON array of sing-box route rule objects). */
+const routeRulesText = ref('')
+const routeRulesError = ref('')
+const parsedRouteRules = ref<unknown[]>([])
+
 /** Prefilled from node identity (set during initialization). */
 const nodeAddress = ref('')
 /** Tag of the rendered config — also used as the config name. */
@@ -155,6 +177,9 @@ const configName = computed(() => generatedTag.value || (preview.value.client_co
 function selectTemplate(t: TemplateInfo) {
   selectedTemplate.value = t
   generatedTag.value = ''
+  routeRulesText.value = ''
+  routeRulesError.value = ''
+  parsedRouteRules.value = []
   for (const p of t.schema.params) {
     // Optional params start empty — server-side validation fills in defaults
     // when the value is absent. Only required params without a generator
@@ -188,6 +213,24 @@ async function goPreview() {
     }
   }
   if (invalid) return
+
+  // Validate the optional custom route rules: a JSON array of rule objects.
+  routeRulesError.value = ''
+  parsedRouteRules.value = []
+  const text = routeRulesText.value.trim()
+  if (text) {
+    try {
+      const parsed = JSON.parse(text)
+      if (!Array.isArray(parsed) || parsed.some((r) => r === null || typeof r !== 'object' || Array.isArray(r))) {
+        routeRulesError.value = 'Must be a JSON array of rule objects.'
+      } else {
+        parsedRouteRules.value = parsed
+      }
+    } catch (e) {
+      routeRulesError.value = `Invalid JSON: ${(e as Error).message}`
+    }
+    if (routeRulesError.value) return
+  }
 
   generating.value = true
   try {
@@ -245,6 +288,7 @@ async function handleSubmit() {
       server_config: preview.value.server_config,
       client_config: preview.value.client_config,
       params: { ...formParams, tag: configName.value },
+      ...(parsedRouteRules.value.length > 0 ? { route_rules: parsedRouteRules.value } : {}),
     })
     router.push({ name: 'configs' })
   } catch (e: unknown) {
@@ -277,5 +321,11 @@ onMounted(async () => {
 
 .compat-row {
   margin-top: var(--space-sm);
+}
+
+.mono-input textarea {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

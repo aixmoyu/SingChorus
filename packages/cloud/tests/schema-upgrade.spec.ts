@@ -80,10 +80,13 @@ describe('legacy schema upgrade', () => {
        VALUES ('fp1', 'n1', '{}', '{}', '{}', 'singbox', 'h', 1, 0, NULL, 'tag1', datetime('now'), datetime('now'))`,
     ).run();
     const row = await db.prepare(
-      'SELECT server_config, params FROM client_configs WHERE fingerprint = ?',
-    ).bind('fp1').first<{ server_config: string; params: string }>();
+      'SELECT server_config, params, route_rules FROM client_configs WHERE fingerprint = ?',
+    ).bind('fp1').first<{ server_config: string; params: string; route_rules: string }>();
     expect(JSON.parse(row!.server_config)).toEqual({});
     expect(JSON.parse(row!.params)).toEqual({});
+    // route_rules (added later) gets its NOT NULL DEFAULT '[]' — the sync upsert
+    // and the delivery SELECT both reference the column unconditionally.
+    expect(JSON.parse(row!.route_rules)).toEqual([]);
   });
 
   /**

@@ -321,6 +321,7 @@
     "auto_detect_interface": true,
     "final": "proxy",
     "rules": [
+      "{{ route_rules }}",
       {
         "preferred_by": [
           "ts-ep"

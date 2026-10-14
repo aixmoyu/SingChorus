@@ -68,6 +68,10 @@ const ALTER_TABLES = [
   // NOT NULL 在 ADD COLUMN 里必须带 DEFAULT（SQLite 限制），行为与全新库一致。
   "ALTER TABLE client_configs ADD COLUMN server_config TEXT NOT NULL DEFAULT '{}'",
   "ALTER TABLE client_configs ADD COLUMN params TEXT NOT NULL DEFAULT '{}'",
+  // Per-config custom route rules (JSON array of sing-box route rule objects),
+  // spliced into the client template's {{ route_rules }} at delivery. 存量行
+  // 补 '[]'（无自定义规则），行为与全新库一致。
+  "ALTER TABLE client_configs ADD COLUMN route_rules TEXT NOT NULL DEFAULT '[]'",
 ];
 
 // Design note: overall template bindings are split by scope —
@@ -152,6 +156,7 @@ const CREATE_TABLES = [
     config TEXT NOT NULL,
     server_config TEXT NOT NULL DEFAULT '{}',
     params TEXT NOT NULL DEFAULT '{}',
+    route_rules TEXT NOT NULL DEFAULT '[]',
     protocol_type TEXT NOT NULL,
     content_hash TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,

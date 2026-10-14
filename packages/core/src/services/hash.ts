@@ -16,11 +16,17 @@ function stableStringify(v: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
 }
 
-export function computeContentHash(server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): string {
+export function computeContentHash(
+  server: Record<string, unknown>,
+  client: Record<string, unknown>,
+  params: Record<string, unknown>,
+  routeRules: unknown[] = [],
+): string {
   const parts = [
     stableStringify(server),
     stableStringify(client),
     stableStringify(params),
+    stableStringify(routeRules),
   ];
   return createHash('sha256').update(parts.join('|')).digest('hex');
 }

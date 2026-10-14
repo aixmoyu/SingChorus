@@ -15,6 +15,9 @@ export interface ProtocolInstanceConfig {
   id: string;
   serverConfig: Record<string, unknown>;
   clientConfig: Record<string, unknown>;
+  /** Optional custom route rules contributed to the client template's
+   *  `{{ route_rules }}` splice point (absent/empty → nothing spliced). */
+  routeRules?: unknown[];
 }
 
 function normalizeToken(s: string): string {
@@ -286,6 +289,12 @@ export class PluginRegistry {
       replacements[normalizeToken('{{ proxy_tags }}')] = instances
         .map((i) => i.clientConfig.tag)
         .filter((t): t is string => typeof t === 'string' && t.length > 0);
+      // Custom per-config route rules: always registered (possibly empty) so an
+      // unused `{{ route_rules }}` splice point is removed from the rules array
+      // instead of surviving as a literal placeholder element.
+      replacements[normalizeToken('{{ route_rules }}')] = instances.flatMap(
+        (i) => (Array.isArray(i.routeRules) ? i.routeRules : []),
+      );
     }
 
     const resolved = resolveAndValidate(paramDefs as any, overallParams);

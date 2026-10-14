@@ -128,14 +128,25 @@ interface LoadedConfig extends ProtocolInstanceConfig {
   protocolId?: string;
 }
 
+/** Parse a client_configs.route_rules JSON column (absent/malformed → []). */
+function parseRouteRules(json: string | undefined): unknown[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig[]> {
   if (configsCache && Date.now() - configsCache.at < CONFIGS_TTL_MS) {
     return configsCache.configs as LoadedConfig[];
   }
   try {
     const { results } = await env.DB.prepare(
-      `SELECT name, config, protocol_type FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
-    ).all<{ name: string; config: string; protocol_type: string }>();
+      `SELECT name, config, protocol_type, route_rules FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
+    ).all<{ name: string; config: string; protocol_type: string; route_rules?: string }>();
     const configs: LoadedConfig[] = [];
     for (const row of results ?? []) {
       try {
@@ -146,6 +157,7 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig
             serverConfig: {},
             clientConfig: parsed,
             protocolId: row.protocol_type || undefined,
+            routeRules: parseRouteRules(row.route_rules),
           });
         }
       } catch { /* malformed row — skip */ }

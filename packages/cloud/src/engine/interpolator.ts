@@ -56,7 +56,7 @@ function substituteInString(s: string, params: Record<string, unknown>): unknown
 // Placeholders handled by registry.splicePlaceholders (array-spread semantics).
 // When these survive into replacePlaceholders, it means splice had no replacement —
 // warn rather than silently emitting empty string.
-const SPLICE_KEYWORDS = new Set(['protocols', 'proxy_tags']);
+const SPLICE_KEYWORDS = new Set(['protocols', 'proxy_tags', 'route_rules']);
 
 function safeResolveEmbedded(expr: string, params: Record<string, unknown>): unknown {
   try {
