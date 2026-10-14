@@ -55,7 +55,6 @@ export const useConfigStore = defineStore('config', () => {
     server_config: Record<string, unknown>
     client_config: Record<string, unknown>
     params: Record<string, unknown>
-    route_rules?: unknown[]
   }): Promise<ConfigEntry> {
     const res = await http.post('/core/configs', data)
     return res.data as ConfigEntry

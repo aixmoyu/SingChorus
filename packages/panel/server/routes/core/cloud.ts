@@ -24,6 +24,8 @@ const createSubscriptionSchema = z.object({
   singboxVersion: z.string().optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: recordSchema.optional(),
+  // 订阅级自定义路由规则：透传给 cloud（url 型由云端 superRefine 拒绝）。
+  routeRules: z.array(recordSchema).max(100).optional(),
   active: z.boolean().optional(),
 })
 
@@ -35,6 +37,7 @@ const updateSubscriptionSchema = z.object({
   singboxVersion: z.string().optional(),
   overallTemplateId: z.string().nullable().optional(),
   overallParams: recordSchema.optional(),
+  routeRules: z.array(recordSchema).max(100).optional(),
   active: z.boolean().optional(),
   regenerateToken: z.boolean().optional(),
 })

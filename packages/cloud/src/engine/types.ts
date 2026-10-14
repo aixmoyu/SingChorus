@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isValidCompatRange } from './compat';
+import { safeParseArray } from '../services/safe-parse';
 
 export const ParamDefSchema = z.object({
   name: z.string().min(1, 'Param name must not be empty'),
@@ -147,6 +148,8 @@ export interface SubscriptionRow {
   singbox_version: string;
   overall_template_id: string | null;
   overall_params: string;
+  /** 订阅级自定义 route rule 数组（JSON 文本，'[]' 默认）。 */
+  route_rules: string;
   token: string;
   active: string;
   created_at: string;
@@ -167,6 +170,8 @@ export interface Subscription {
   singboxVersion: string;
   overallTemplateId: string | null;
   overallParams: string;
+  /** 订阅级自定义 route rule 数组：交付渲染时拼进 overall-client 模板的 {{ route_rules }}。 */
+  routeRules: unknown[];
   token: string;
   active: boolean;
   createdAt: string;
@@ -182,6 +187,7 @@ export function parseSubscriptionRow(row: SubscriptionRow): Subscription {
     singboxVersion: row.singbox_version,
     overallTemplateId: row.overall_template_id ?? null,
     overallParams: row.overall_params,
+    routeRules: safeParseArray(row.route_rules),
     token: row.token,
     active: row.active === '1',
     createdAt: row.created_at,

@@ -7,7 +7,6 @@ import { PluginError } from '../engine/errors';
 import { isValidSingboxVersion, isCompatSatisfied } from '../engine/compat';
 import { parseSubscriptionRow, type SubscriptionRow } from '../engine/types';
 import { outboundToShareUrl } from '../engine/share-urls';
-import { safeParseArray } from '../services/safe-parse';
 import { hashToken } from '../auth/jwt';
 import { fireAndForget } from '../services/fire-and-forget';
 import type { Logger } from '../logger';
@@ -135,8 +134,8 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig
   }
   try {
     const { results } = await env.DB.prepare(
-      `SELECT name, config, protocol_type, route_rules FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
-    ).all<{ name: string; config: string; protocol_type: string; route_rules?: string }>();
+      `SELECT name, config, protocol_type FROM client_configs WHERE deployed = 1 AND enabled = 1 LIMIT 40`,
+    ).all<{ name: string; config: string; protocol_type: string }>();
     const configs: LoadedConfig[] = [];
     for (const row of results ?? []) {
       try {
@@ -147,7 +146,6 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig
             serverConfig: {},
             clientConfig: parsed,
             protocolId: row.protocol_type || undefined,
-            routeRules: safeParseArray(row.route_rules),
           });
         }
       } catch { /* malformed row — skip */ }
@@ -230,24 +228,6 @@ subscriptions.get('/s/:path', async (c) => {
     ).all<Record<string, unknown>>();
 
     if (instanceRows && instanceRows.length > 0) {
-      // 已知限制（B2）：protocol_instances 表没有 route_rules 列（云侧实例管理
-      // 路径无规则编辑 UI）——本交付路径永远不带自定义规则。若同一部署同时有
-      // 已同步的 client_configs 带着非空规则，规则会被这里静默跳过：打一条
-      // warn 让管理员能在日志里发现，而不是无声失效。
-      try {
-        const withRules = await c.env.DB.prepare(
-          `SELECT 1 FROM client_configs
-           WHERE deployed = 1 AND enabled = 1
-             AND route_rules IS NOT NULL AND route_rules NOT IN ('', '[]')
-           LIMIT 1`,
-        ).first();
-        if (withRules) {
-          c.get('logger').warn(
-            'subscription delivery: serving protocol_instances which carry no route_rules — custom route rules on synced client configs are not applied in this delivery path',
-            { path },
-          );
-        }
-      } catch { /* best-effort diagnostics — never block delivery */ }
       configs = instanceRows.map((row: any) => ({
         id: row.id,
         serverConfig: row.server_config ? JSON.parse(row.server_config) : {},
@@ -347,10 +327,20 @@ subscriptions.get('/s/:path', async (c) => {
     }
 
     if (sub.overallTemplateId && compatible.length > 0) {
-      // Render via overall template (works with both D1 instances and synced client configs)
+      // Render via overall template (works with both D1 instances and synced
+      // client configs). Subscription-level route rules are spliced into the
+      // template's {{ route_rules }} regardless of the delivery path above.
       const overallParams = sub.overallParams ? JSON.parse(sub.overallParams) : {};
-      clientConfig = await reg.renderClientOverall(compatible, sub.overallTemplateId, overallParams);
+      clientConfig = await reg.renderClientOverall(compatible, sub.overallTemplateId, overallParams, sub.routeRules);
     } else {
+      if (sub.routeRules.length > 0) {
+        // 简单合并没有模板 → {{ route_rules }} 拼接点不存在，规则不生效；
+        // 打 warn 提示管理员（与 B3「模板无拼接点」同一语义）。
+        c.get('logger').warn(
+          'subscription delivery: simple merge has no overall template — subscription route rules were not applied',
+          { path, rules: sub.routeRules.length },
+        );
+      }
       // Simple merge
       clientConfig = {
         version: '1',
@@ -394,6 +384,20 @@ const singboxVersionSchema = z.string().superRefine((val, ctx) => {
   }
 });
 
+/** 订阅级 route rules 数量上限（与 sing-box 配置规模合理上限对齐）。 */
+export const MAX_ROUTE_RULES = 100;
+
+/**
+ * 订阅级自定义 route rule：结构校验只挡「明显坏」的输入（规则本体为对象）。
+ * outbound 可省略——sing-box 1.11+ 的 action 型规则（reject / hijack-dns /
+ * sniff 等）不带 outbound，与原配置级实现语义一致；存在时必须是空串以外的
+ * 字符串。outbound 是否存在于交付配置中在渲染时告警（renderOverall 白名单
+ * best-effort）——订阅级无法在写入时预知交付 outbound 集合（实例可后改）。
+ */
+const routeRulesSchema = z
+  .array(z.object({ outbound: z.string().min(1).optional() }).passthrough())
+  .max(MAX_ROUTE_RULES, `At most ${MAX_ROUTE_RULES} route rules are allowed`);
+
 /**
  * 写路径预校验（设计 §13.7）：订阅绑定模板的存在性 + 版本 compat 在
  * create/update 时即校验，不让管理员创建一个注定交付 400/500 的订阅。
@@ -429,6 +433,7 @@ const createSubSchema = z.object({
   overallTemplateId: z.string().optional(),
   overallParams: z.record(z.unknown()).optional(),
   active: z.boolean().optional(),
+  routeRules: routeRulesSchema.optional(),
 }).superRefine((val, ctx) => {
   // singbox 型必须绑定版本（§13.1）；url 型不绑定版本/模板，传了也无意义。
   if (val.type === 'singbox' && !val.singboxVersion) {
@@ -445,6 +450,13 @@ const createSubSchema = z.object({
       message: 'singboxVersion is not applicable to url-type subscriptions (share URLs are not sing-box version bound)',
     });
   }
+  if (val.type === 'url' && val.routeRules !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['routeRules'],
+      message: 'routeRules are not applicable to url-type subscriptions (share URLs are not sing-box configs)',
+    });
+  }
 });
 
 const updateSubSchema = z.object({
@@ -458,6 +470,7 @@ const updateSubSchema = z.object({
   overallParams: z.record(z.unknown()).optional(),
   active: z.boolean().optional(),
   regenerateToken: z.boolean().optional(),
+  routeRules: routeRulesSchema.optional(),
 });
 
 // CRUD routes (admin-only)
@@ -504,8 +517,8 @@ subscriptions.post('/api/subscriptions', adminAuth, zValidator('json', createSub
 
   try {
     await c.env.DB.prepare(
-      `INSERT INTO subscriptions (id, name, path, type, singbox_version, overall_template_id, overall_params, token, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO subscriptions (id, name, path, type, singbox_version, overall_template_id, overall_params, route_rules, token, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       id,
       subName,
@@ -514,6 +527,7 @@ subscriptions.post('/api/subscriptions', adminAuth, zValidator('json', createSub
       subVersion,
       overallTemplateId,
       JSON.stringify(body.overallParams ?? {}),
+      JSON.stringify(body.routeRules ?? []),
       token,
       activeVal,
     ).run();
@@ -549,8 +563,8 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
   }
   // url 型不参与版本/模板语义——这些字段的更新对它无意义，明示报错。
   const isUrl = existing.type === 'url';
-  if (isUrl && (body.singboxVersion !== undefined || body.overallTemplateId !== undefined || body.overallParams !== undefined)) {
-    return c.json({ error: { code: 'SUB_FIELD_NOT_APPLICABLE', message: 'singboxVersion / overallTemplateId do not apply to url-type subscriptions' } }, 400);
+  if (isUrl && (body.singboxVersion !== undefined || body.overallTemplateId !== undefined || body.overallParams !== undefined || body.routeRules !== undefined)) {
+    return c.json({ error: { code: 'SUB_FIELD_NOT_APPLICABLE', message: 'singboxVersion / overallTemplateId / routeRules do not apply to url-type subscriptions' } }, 400);
   }
 
   // 预校验（§13.7）：版本或模板变更时，以「更新后的最终值」比对 compat，
@@ -577,6 +591,7 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
   if (body.singboxVersion !== undefined) { sets.push('singbox_version = ?'); binds.push(body.singboxVersion); }
   if (body.overallTemplateId !== undefined) { sets.push('overall_template_id = ?'); binds.push(body.overallTemplateId); }
   if (body.overallParams !== undefined) { sets.push('overall_params = ?'); binds.push(JSON.stringify(body.overallParams)); }
+  if (body.routeRules !== undefined) { sets.push('route_rules = ?'); binds.push(JSON.stringify(body.routeRules)); }
   if (body.token !== undefined) { sets.push('token = ?'); binds.push(body.token); }
   if (body.active !== undefined) { sets.push('active = ?'); binds.push(body.active ? '1' : '0'); }
   if (body.regenerateToken) {
@@ -599,10 +614,11 @@ subscriptions.put('/api/subscriptions/:id', adminAuth, zValidator('json', update
       throw e;
     }
     // 渲染产物失效（设计 §13.1）：sub_delivery_cache 按 path 键控，版本 /
-    // overall 模板 / 参数 / token 变更后，stale fallback 不得再端旧版本的
-    // 渲染结果（v1 的隐性 bug：不同 version 共享同一缓存行）。
+    // overall 模板 / 参数 / route rules / token 变更后，stale fallback 不得
+    // 再端旧版本的渲染结果（v1 的隐性 bug：不同 version 共享同一缓存行）。
     if (body.singboxVersion !== undefined || body.overallTemplateId !== undefined ||
-        body.overallParams !== undefined || body.token !== undefined || body.regenerateToken) {
+        body.overallParams !== undefined || body.routeRules !== undefined ||
+        body.token !== undefined || body.regenerateToken) {
       await c.env.DB.prepare('DELETE FROM sub_delivery_cache WHERE path = ?')
         .bind(existing.path).run().catch(() => {});
     }

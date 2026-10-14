@@ -204,6 +204,8 @@ render.post('/overall', adminAuth, async (c) => {
     params?: Record<string, unknown>;
     instances?: ProtocolInstanceConfig[];
     overrides?: DockerOverrides;
+    /** Subscription-level route rules preview (client only). */
+    routeRules?: unknown[];
   }>(c);
 
   if (!body) {
@@ -215,6 +217,12 @@ render.post('/overall', adminAuth, async (c) => {
   if (!['server', 'client', 'docker'].includes(body.category)) {
     return c.json({ error: { code: 'INVALID_CATEGORY', message: "category must be 'server', 'client', or 'docker'" } }, 400);
   }
+  // 预览透传参数的最小形状约束（admin-only dry-run）：非数组会被 splice 整体
+  // 当作单元素拼进模板，产出畸形的预览结果——写入路径（routeRulesSchema）同款
+  // 「只挡明显坏」哲学，规则本体/出站语义不在此校验。
+  if (body.routeRules !== undefined && !Array.isArray(body.routeRules)) {
+    return c.json({ error: { code: 'INVALID_ROUTE_RULES', message: 'routeRules must be an array when provided' } }, 400);
+  }
 
   const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
@@ -225,7 +233,7 @@ render.post('/overall', adminAuth, async (c) => {
       return c.json({ serverConfig: result }, 200);
     }
     if (body.category === 'client') {
-      const result = await reg.renderClientOverall(body.instances ?? [], body.templateId, body.params ?? {});
+      const result = await reg.renderClientOverall(body.instances ?? [], body.templateId, body.params ?? {}, body.routeRules);
       return c.json({ clientConfig: result }, 200);
     }
     // docker

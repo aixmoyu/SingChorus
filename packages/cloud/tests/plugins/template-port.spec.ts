@@ -145,8 +145,8 @@ describe('template port verification', () => {
     expect(json).not.toContain('{{');
   });
 
-  // {{ route_rules }} splice point: per-instance custom rules are spread into
-  // route.rules (array semantics → no comma handling needed); absent/empty
+  // {{ route_rules }} splice point: subscription-level custom rules are spread
+  // into route.rules (array semantics → no comma handling needed); absent/empty
   // rules remove the placeholder element entirely.
   it('renderClientOverall splices route_rules into route.rules and drops the placeholder when empty', async () => {
     const db = makeMockDB([mkRow('client-default-ts', 'overall-client', clientTsTemplate)]);
@@ -168,11 +168,12 @@ describe('template port verification', () => {
     const rule2 = { domain_suffix: ['.example.org'], outbound: 'proxy' };
     const withRules: any = await reg.renderClientOverall(
       [
-        { id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' }, routeRules: [rule] },
-        { id: 'i2', serverConfig: {}, clientConfig: { tag: 'proxy-b' }, routeRules: [rule2] },
+        { id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' } },
+        { id: 'i2', serverConfig: {}, clientConfig: { tag: 'proxy-b' } },
       ],
       'client-default-ts',
       {},
+      [rule, rule2],
     );
     expect(withRules.route.rules).toHaveLength(templateRuleCount + 2);
     expect(withRules.route.rules).toContainEqual(rule);
@@ -183,17 +184,17 @@ describe('template port verification', () => {
     expect(withRules.route.rules.slice(2)).toEqual(T(clientTsTemplate).route.rules.slice(1));
   });
 
-  // B3 可观测性：实例携带自定义规则但模板没有 {{ route_rules }} 拼接点 →
+  // B3 可观测性：订阅携带自定义规则但模板没有 {{ route_rules }} 拼接点 →
   // 规则被静默丢弃前必须打 warn；模板有拼接点 → 不告警。
   it('renderClientOverall warns when custom rules hit a template without a route_rules splice point', async () => {
-    const instances = [{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' }, routeRules: [{ domain: ['example.com'], outbound: 'direct' }] }];
+    const routeRules = [{ domain: ['example.com'], outbound: 'direct' }];
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
     // client-default 模板没有 route_rules 拼接点（内置种子中仅 default-ts 有）
     const db = makeMockDB([mkRow('client-default', 'overall-client', clientTemplate)]);
     const reg = new PluginRegistry(db, logger as any);
     await reg.loadAll();
-    await reg.renderClientOverall(instances, 'client-default', {});
+    await reg.renderClientOverall([{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' } }], 'client-default', {}, routeRules);
     expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(String(logger.warn.mock.calls[0][0])).toContain('route_rules');
 
@@ -203,7 +204,33 @@ describe('template port verification', () => {
     const db2 = makeMockDB([mkRow('client-default-ts', 'overall-client', clientTsTemplate)]);
     const reg2 = new PluginRegistry(db2, logger2 as any);
     await reg2.loadAll();
-    await reg2.renderClientOverall(instances, 'client-default-ts', {});
+    await reg2.renderClientOverall([{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' } }], 'client-default-ts', {}, routeRules);
     expect(logger2.warn).not.toHaveBeenCalled();
+  });
+
+  // outbound 白名单告警（best-effort）：规则引用的 outbound 不在
+  // direct/proxy/auto 与实例 tag 并集内 → 渲染时 warn 不阻断；命中已知 tag → 不告警。
+  it('renderClientOverall warns when route rules reference unknown outbounds', async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const db = makeMockDB([mkRow('client-default-ts', 'overall-client', clientTsTemplate)]);
+    const reg = new PluginRegistry(db, logger as any);
+    await reg.loadAll();
+
+    const rules = [
+      { domain: ['example.com'], outbound: 'proxy-a' },       // instance tag → known
+      { domain: ['example.org'], outbound: 'direct' },        // builtin → known
+      { domain: ['example.net'], outbound: 'emoji-group' },   // unknown → warn
+    ];
+    const result: any = await reg.renderClientOverall(
+      [{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' } }],
+      'client-default-ts',
+      {},
+      rules,
+    );
+    // 渲染不阻断：三条规则全部拼入
+    expect(result.route.rules.slice(0, 3)).toEqual(rules);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(String(logger.warn.mock.calls[0][0])).toContain('not present in the delivered config');
+    expect(logger.warn.mock.calls[0][1]).toMatchObject({ unknownOutbounds: ['emoji-group'] });
   });
 });

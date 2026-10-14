@@ -71,7 +71,10 @@ const ALTER_TABLES = [
   // Per-config custom route rules (JSON array of sing-box route rule objects),
   // spliced into the client template's {{ route_rules }} at delivery. 存量行
   // 补 '[]'（无自定义规则），行为与全新库一致。
-  "ALTER TABLE client_configs ADD COLUMN route_rules TEXT NOT NULL DEFAULT '[]'",
+  // 【2026-10-14 重构】route_rules 已迁移到 subscriptions 表（订阅级交付语义），
+  // client_configs 的该列停止写入；存量库的死列不写 DROP（SQLite 限制 + 未上
+  // 线无迁移场景），全新库的 CREATE TABLE 已不含此列。
+  "ALTER TABLE subscriptions ADD COLUMN route_rules TEXT NOT NULL DEFAULT '[]'",
 ];
 
 // Design note: overall template bindings are split by scope —
@@ -142,6 +145,7 @@ const CREATE_TABLES = [
     singbox_version TEXT NOT NULL,
     overall_template_id TEXT DEFAULT NULL,
     overall_params TEXT NOT NULL DEFAULT '{}',
+    route_rules TEXT NOT NULL DEFAULT '[]',
     token TEXT NOT NULL UNIQUE,
     active TEXT NOT NULL DEFAULT '1',
     created_at TEXT DEFAULT (datetime('now')),
@@ -156,7 +160,6 @@ const CREATE_TABLES = [
     config TEXT NOT NULL,
     server_config TEXT NOT NULL DEFAULT '{}',
     params TEXT NOT NULL DEFAULT '{}',
-    route_rules TEXT NOT NULL DEFAULT '[]',
     protocol_type TEXT NOT NULL,
     content_hash TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,

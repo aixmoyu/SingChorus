@@ -47,6 +47,23 @@
                 placeholder="Select client overall template (optional)"
               />
             </n-form-item>
+            <n-form-item
+              label="Custom Route Rules"
+              :show-require-mark="false"
+              :validation-status="routeRulesError ? 'error' : undefined"
+            >
+              <n-input
+                v-model:value="routeRulesText"
+                type="textarea"
+                :rows="4"
+                class="mono-input"
+                aria-label="Custom route rules JSON"
+                placeholder='[{"domain": ["example.com"], "outbound": "direct"}]'
+              />
+              <template #feedback>
+                {{ routeRulesError || 'Optional — a JSON array of sing-box route rules spliced into this subscription\'s client config at delivery time. Empty = none. Only applied when the overall-client template provides a route_rules splice point (e.g. client-default-ts); not applied to url-type subscriptions.' }}
+              </template>
+            </n-form-item>
           </template>
           <n-form-item label="Active">
             <n-switch v-model:value="form.active" />
@@ -102,6 +119,28 @@ const form = ref({
   active: true,
 })
 
+/** Optional subscription-level route rules (JSON array of sing-box route rule objects). */
+const routeRulesText = ref('[]')
+const routeRulesError = ref('')
+
+/** Parse the textarea into a rules array; null when invalid (error already shown). */
+function parseRouteRules(): unknown[] | null {
+  routeRulesError.value = ''
+  const text = routeRulesText.value.trim()
+  if (!text) return []
+  try {
+    const parsed = JSON.parse(text)
+    if (!Array.isArray(parsed) || parsed.some((r) => r === null || typeof r !== 'object' || Array.isArray(r))) {
+      routeRulesError.value = 'Route rules must be a JSON array of rule objects.'
+      return null
+    }
+    return parsed
+  } catch (e) {
+    routeRulesError.value = `Route rules is not valid JSON: ${(e as Error).message}`
+    return null
+  }
+}
+
 const formRules = {
   path: [
     { required: true, message: 'Path is required', trigger: 'blur' },
@@ -145,6 +184,10 @@ async function handleSubmit() {
 
   if (!form.value.name?.trim()) form.value.name = form.value.path
 
+  // 解析失败时已在 textarea 下提示，直接留在表单页。
+  const routeRules = form.value.type === 'singbox' ? parseRouteRules() : null
+  if (form.value.type === 'singbox' && routeRules === null) return
+
   submitting.value = true
   try {
     const payload: {
@@ -153,6 +196,7 @@ async function handleSubmit() {
       type: SubscriptionType
       singboxVersion?: string
       overallTemplateId?: string
+      routeRules?: unknown[]
       active: boolean
       token?: string
     } = {
@@ -161,10 +205,11 @@ async function handleSubmit() {
       type: form.value.type,
       active: form.value.active,
     }
-    // url 型不绑定版本/模板——字段根本不进 payload（云端也会拒绝）。
+    // url 型不绑定版本/模板/规则——字段根本不进 payload（云端也会拒绝）。
     if (form.value.type === 'singbox') {
       payload.singboxVersion = form.value.singboxVersion!
       if (form.value.overallTemplateId) payload.overallTemplateId = form.value.overallTemplateId
+      if (routeRules && routeRules.length > 0) payload.routeRules = routeRules
     }
     if (form.value.token) payload.token = form.value.token
     const created = await subscriptionStore.createSubscription(payload)
@@ -200,3 +245,11 @@ onMounted(() => {
   void loadVersions()
 })
 </script>
+
+<style scoped>
+.mono-input textarea {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+</style>

@@ -2,6 +2,7 @@ import { SELF, env } from 'cloudflare:test';
 import { beforeEach } from 'vitest';
 import { resetDatabaseInitCache } from '../src/db/schema';
 import { resetRegistryCache } from '../src/engine/registry';
+import { resetSubscriptionCaches } from '../src/routes/subscriptions';
 import { DEV_AUTH_TOKEN, adminHeaders, api, jsonBody, seed } from './helpers';
 import { RANGE_EXCLUDING_VERSION_IN_ALL_SEEDS, SINGBOX_CATALOG, VERSION_BELOW_ALL_SEEDS, VERSION_IN_ALL_SEEDS } from './seed-baseline';
 
@@ -10,6 +11,7 @@ import { RANGE_EXCLUDING_VERSION_IN_ALL_SEEDS, SINGBOX_CATALOG, VERSION_BELOW_AL
 beforeEach(() => {
   resetDatabaseInitCache();
   resetRegistryCache();
+  resetSubscriptionCaches();
 });
 
 // P1: Helper to obtain JWT via /api/auth/login
@@ -432,5 +434,213 @@ describe('Subscription Pre-Validation (write path)', () => {
       body: JSON.stringify({ overallTemplateId: null, singboxVersion: VERSION_BELOW_ALL_SEEDS }),
     });
     expect(unbind.status).toBe(200); // 模板清空后版本不再受 client-default 约束（低于下限也能改）
+  });
+});
+
+// --- 2026-10-14 重构：route_rules 从 client_configs 迁移到订阅级 ---
+describe('Subscription Route Rules (subscription-level)', () => {
+  const RULE = { domain: ['example.com'], outbound: 'direct' };
+
+  it('POST/GET/PUT routeRules 回显', async () => {
+    const { status, body } = await createSub('Rules', 'rules-sub', { routeRules: [RULE] });
+    expect(status).toBe(201);
+    expect(body.subscription.routeRules).toEqual([RULE]);
+
+    const got = await SELF.fetch(`http://localhost/api/subscriptions/${body.subscription.id}`, { headers: await AUTH() });
+    expect(((await got.json() as any).subscription).routeRules).toEqual([RULE]);
+
+    const rule2 = { domain_suffix: ['.example.org'], outbound: 'proxy' };
+    const put = await SELF.fetch(`http://localhost/api/subscriptions/${body.subscription.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ routeRules: [rule2] }),
+    });
+    expect(put.status).toBe(200);
+    expect(((await put.json() as any).subscription).routeRules).toEqual([rule2]);
+  });
+
+  it('POST routeRules 超 100 条 → 400；outbound 非字符串/空串 → 400', async () => {
+    const tooMany = Array.from({ length: 101 }, (_, i) => ({ domain: [`d${i}.com`], outbound: 'direct' }));
+    const { status } = await createSub('Too Many', 'too-many-rules', { routeRules: tooMany });
+    expect(status).toBe(400);
+
+    const { status: badStatus } = await createSub('Bad Rule', 'bad-rule', {
+      routeRules: [{ domain: ['x.com'], outbound: 42 }],
+    });
+    expect(badStatus).toBe(400);
+
+    const { status: emptyOutbound } = await createSub('Empty Outbound', 'empty-outbound', {
+      routeRules: [{ domain: ['x.com'], outbound: '' }],
+    });
+    expect(emptyOutbound).toBe(400);
+  });
+
+  it('无 outbound 的规则（action 型，如 reject/hijack-dns）合法可存', async () => {
+    // sing-box 1.11+ 的 action 型规则不带 outbound；结构校验不强制 outbound，
+    // 出站语义由渲染时白名单告警（best-effort）承担——与原配置级实现一致。
+    const actionRules = [
+      { action: 'reject', domain: ['ads.example.com'] },
+      { protocol: 'dns', action: 'hijack-dns' },
+    ];
+    const { status, body } = await createSub('Action Rules', 'action-rules', { routeRules: actionRules });
+    expect(status).toBe(201);
+    expect(body.subscription.routeRules).toEqual(actionRules);
+  });
+
+  it('url 型订阅：POST 带 routeRules → 400；PUT routeRules → 400 SUB_FIELD_NOT_APPLICABLE', async () => {
+    const res = await SELF.fetch('http://localhost/api/subscriptions', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ name: 'Url Rules', path: 'url-rules', type: 'url', routeRules: [RULE] }),
+    });
+    expect(res.status).toBe(400);
+
+    const created = await SELF.fetch('http://localhost/api/subscriptions', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ name: 'Url Plain', path: 'url-plain', type: 'url' }),
+    });
+    expect(created.status).toBe(201);
+    const sub = (await created.json() as any).subscription;
+
+    const put = await SELF.fetch(`http://localhost/api/subscriptions/${sub.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ routeRules: [RULE] }),
+    });
+    expect(put.status).toBe(400);
+    expect((await put.json() as any).error.code).toBe('SUB_FIELD_NOT_APPLICABLE');
+  });
+
+  it('交付（实例路径）：订阅级规则拼进 overall-client 模板的 route.rules', async () => {
+    await seed();
+    await SELF.fetch('http://localhost/api/protocols', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({
+        id: 'rules-proto', name: 'Rules Proto', version: '1.0.0',
+        serverTemplate: JSON.stringify({ type: 'vless', tag: 'p' }),
+        clientTemplate: JSON.stringify({ type: 'vless', server: '{{ params.domain }}', tag: 'p' }),
+        params: JSON.stringify([{ name: 'domain', type: 'string', required: true }]),
+      }),
+    });
+    await SELF.fetch('http://localhost/api/nodes', {
+      method: 'POST', headers: await AUTH(), body: JSON.stringify({ name: 'rules-node' }),
+    });
+    const nodes = await SELF.fetch('http://localhost/api/nodes', { headers: await AUTH() });
+    const nodeId = ((await nodes.json() as any).nodes[0] as any).id;
+    const inst = await SELF.fetch('http://localhost/api/protocol-instances', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ protocolId: 'rules-proto', nodeId, params: { domain: 'd.example.com' } }),
+    });
+    expect(inst.status).toBe(201);
+
+    const sub = subBody(await createSub('Tpl Rules', 'tpl-rules', {
+      overallTemplateId: 'client-default-ts',
+      routeRules: [RULE],
+    }));
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(res.status).toBe(200);
+    const config = await res.json() as any;
+    // 规则拼接在模板静态规则之前，交付文档里不再有占位符
+    expect(config.route.rules[0]).toEqual(RULE);
+    expect(JSON.stringify(config)).not.toContain('route_rules');
+  });
+
+  it('交付（client_configs 回退路径）：同样拼接订阅级规则', async () => {
+    await seed();
+    // 无 protocol_instances → 走 client_configs 回退；同步一条 deployed 配置
+    const node = await SELF.fetch('http://localhost/api/nodes', {
+      method: 'POST', headers: await AUTH(), body: JSON.stringify({ name: 'fb-node' }),
+    });
+    expect(node.status).toBe(201);
+    const nodes = await SELF.fetch('http://localhost/api/nodes', { headers: await AUTH() });
+    const fingerprint = ((await nodes.json() as any).nodes[0] as any).fingerprint;
+    const put = await SELF.fetch(`http://localhost/api/clients/${fingerprint}/cfg-a`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({
+        config: { type: 'vless', tag: 'cfg-a', server: 's.example.com' },
+        protocol_type: 'singbox',
+        deployed: true,
+      }),
+    });
+    // 首次同步该配置：upsert 走 INSERT → 201
+    expect(put.status).toBe(201);
+
+    const sub = subBody(await createSub('Fb Rules', 'fb-rules', {
+      overallTemplateId: 'client-default-ts',
+      routeRules: [RULE],
+    }));
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(res.status).toBe(200);
+    const config = await res.json() as any;
+    expect(config.route.rules[0]).toEqual(RULE);
+    expect(config.outbounds.some((o: any) => o.tag === 'cfg-a')).toBe(true);
+  });
+
+  it('简单合并（无 overall 模板）+ 规则 → 200，规则不生效（不影响交付）', async () => {
+    await seed();
+    await SELF.fetch('http://localhost/api/protocols', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({
+        id: 'merge-proto', name: 'Merge Proto', version: '1.0.0',
+        serverTemplate: JSON.stringify({ type: 'vless', tag: 'p' }),
+        clientTemplate: JSON.stringify({ type: 'vless', server: '{{ params.domain }}', tag: 'p' }),
+        params: JSON.stringify([{ name: 'domain', type: 'string', required: true }]),
+      }),
+    });
+    await SELF.fetch('http://localhost/api/nodes', {
+      method: 'POST', headers: await AUTH(), body: JSON.stringify({ name: 'merge-node' }),
+    });
+    const nodes = await SELF.fetch('http://localhost/api/nodes', { headers: await AUTH() });
+    const nodeId = ((await nodes.json() as any).nodes[0] as any).id;
+    await SELF.fetch('http://localhost/api/protocol-instances', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ protocolId: 'merge-proto', nodeId, params: { domain: 'd.example.com' } }),
+    });
+
+    const sub = subBody(await createSub('Merge Rules', 'merge-rules', { routeRules: [RULE] }));
+    const res = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(res.status).toBe(200);
+    const config = await res.json() as any;
+    // 简单合并没有 route 字段，规则无处拼接（交付端有 warn 日志）
+    expect(config.version).toBe('1');
+    expect(config.route).toBeUndefined();
+  });
+
+  it('PUT routeRules 变更 → sub_delivery_cache 失效（stale fallback 不再端旧渲染）', async () => {
+    await seed();
+    // 一个实例 + 无 overall 模板（简单合并）→ 首次交付 200 并写入缓存
+    await SELF.fetch('http://localhost/api/protocols', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({
+        id: 'cache-proto', name: 'Cache Proto', version: '1.0.0',
+        serverTemplate: JSON.stringify({ type: 'vless', tag: 'p' }),
+        clientTemplate: JSON.stringify({ type: 'vless', server: '{{ params.domain }}', tag: 'p' }),
+        params: JSON.stringify([{ name: 'domain', type: 'string', required: true }]),
+      }),
+    });
+    await SELF.fetch('http://localhost/api/nodes', {
+      method: 'POST', headers: await AUTH(), body: JSON.stringify({ name: 'cache-node' }),
+    });
+    const nodes = await SELF.fetch('http://localhost/api/nodes', { headers: await AUTH() });
+    const nodeId = ((await nodes.json() as any).nodes[0] as any).id;
+    await SELF.fetch('http://localhost/api/protocol-instances', {
+      method: 'POST', headers: await AUTH(),
+      body: JSON.stringify({ protocolId: 'cache-proto', nodeId, params: { domain: 'd.example.com' } }),
+    });
+
+    const sub = subBody(await createSub('Cache Rules', 'cache-rules'));
+    const delivery = await SELF.fetch(`http://localhost/s/${sub.path}?token=${sub.token}`);
+    expect(delivery.status).toBe(200);
+    const cached = await (env as any).DB.prepare('SELECT 1 AS ok FROM sub_delivery_cache WHERE path = ?')
+      .bind(sub.path).first();
+    expect(cached).toBeTruthy();
+
+    // routeRules 变更后缓存行必须被删除，否则 D1 故障时 stale fallback
+    // 会把旧规则（甚至已删除的规则）继续端给订阅用户。
+    const put = await SELF.fetch(`http://localhost/api/subscriptions/${sub.id}`, {
+      method: 'PUT', headers: await AUTH(),
+      body: JSON.stringify({ routeRules: [{ domain: ['x.com'], outbound: 'proxy' }] }),
+    });
+    expect(put.status).toBe(200);
+    const after = await (env as any).DB.prepare('SELECT 1 AS ok FROM sub_delivery_cache WHERE path = ?')
+      .bind(sub.path).first();
+    expect(after).toBeFalsy();
   });
 });

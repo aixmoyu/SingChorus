@@ -63,6 +63,8 @@ export interface Subscription {
   singboxVersion: string
   overallTemplateId: string | null
   overallParams: string
+  /** 订阅级自定义路由规则：交付时拼进 overall-client 模板的 {{ route_rules }} 占位符。 */
+  routeRules: unknown[]
   token: string
   active: boolean
   createdAt: string

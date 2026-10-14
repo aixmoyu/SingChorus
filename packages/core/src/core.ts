@@ -160,7 +160,6 @@ export class ChorusCore {
       config: entry.client_config,
       server_config: entry.server_config,
       params: entry.params,
-      route_rules: entry.route_rules,
       protocol_type: entry.type,
       content_hash: entry.content_hash,
       enabled: entry.enabled,
@@ -238,7 +237,6 @@ export class ChorusCore {
           config: entry.client_config,
           server_config: entry.server_config,
           params: entry.params,
-          route_rules: entry.route_rules,
           protocol_type: entry.type,
           content_hash: entry.content_hash,
           enabled: entry.enabled,
@@ -334,7 +332,6 @@ export class ChorusCore {
           server_config: (c.server_config && typeof c.server_config === 'object' ? c.server_config : {}) as Record<string, unknown>,
           client_config: (c.config && typeof c.config === 'object' ? c.config : {}) as Record<string, unknown>,
           params: (c.params && typeof c.params === 'object' ? c.params : {}) as Record<string, unknown>,
-          route_rules: Array.isArray(c.route_rules) ? (c.route_rules as unknown[]) : [],
           enabled: c.enabled === undefined ? true : Boolean(c.enabled),
         });
         if (outcome === 'restored') restored.push(name);
@@ -364,7 +361,6 @@ export class ChorusCore {
       server_config: {},
       client_config: (c.config as Record<string, unknown>) ?? {},
       params: {},
-      route_rules: Array.isArray(c.route_rules) ? (c.route_rules as unknown[]) : [],
       created_at: String(c.created_at ?? ''),
       updated_at: String(c.updated_at ?? ''),
       node_fingerprint: fingerprint,

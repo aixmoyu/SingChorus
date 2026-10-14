@@ -242,4 +242,31 @@ describe('POST /api/render/overall', () => {
     expect(res.status).toBe(400);
     expect((await jsonBody(res)).error.code).toBe('PLG_UNKNOWN_TYPE');
   });
+
+  // 订阅级 routeRules 预览透传（client 模板）：规则拼进 route.rules 首位，
+  // 与交付路径（renderClientOverall 第 4 参）同一拼接语义。
+  it('splices routeRules into the client overall preview', async () => {
+    await seed();
+    const rule = { domain: ['example.com'], outbound: 'proxy-a' };
+    const res = await api('/api/render/overall', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ category: 'client', templateId: 'client-default-ts', instances, routeRules: [rule] }),
+    });
+    expect(res.status).toBe(200);
+    const body = await jsonBody(res);
+    expect(body.clientConfig.route.rules[0]).toEqual(rule);
+    expect(JSON.stringify(body.clientConfig)).not.toContain('route_rules');
+  });
+
+  it('returns 400 INVALID_ROUTE_RULES for non-array routeRules', async () => {
+    await seed();
+    const res = await api('/api/render/overall', {
+      method: 'POST',
+      headers: await adminHeaders(),
+      body: JSON.stringify({ category: 'client', templateId: 'client-default-ts', instances, routeRules: { domain: 'x' } }),
+    });
+    expect(res.status).toBe(400);
+    expect((await jsonBody(res)).error.code).toBe('INVALID_ROUTE_RULES');
+  });
 });

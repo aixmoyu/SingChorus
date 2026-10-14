@@ -2,21 +2,12 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
-import { safeParseObject, safeParseArray } from '../services/safe-parse';
+import { safeParseObject } from '../services/safe-parse';
 
 const upsertSchema = z.object({
   config: z.record(z.unknown()),
   server_config: z.record(z.unknown()).optional(),
   params: z.record(z.unknown()).optional(),
-  // Custom route rules spliced into the client template's {{ route_rules }}.
-  // Length cap + a structural outbound check (cloud doesn't know the node's
-  // proxy tags — semantic outbound validation happens core-side at write time).
-  route_rules: z.array(
-    z.record(z.unknown()).refine(
-      (r) => r.outbound === undefined || (typeof r.outbound === 'string' && r.outbound.length > 0),
-      { message: 'outbound must be a non-empty string when present' },
-    ),
-  ).max(100).optional(),
   protocol_type: z.string().min(1),
   content_hash: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -39,7 +30,6 @@ interface ClientConfigRow {
   config: string;
   server_config: string;
   params: string;
-  route_rules: string;
   protocol_type: string;
   content_hash: string;
   enabled: number;
@@ -73,7 +63,6 @@ function toFullRecord(row: ClientConfigRow): Record<string, unknown> {
     config: JSON.parse(row.config),
     server_config: safeParseObject(row.server_config),
     params: safeParseObject(row.params),
-    route_rules: safeParseArray(row.route_rules),
     protocol_type: row.protocol_type,
     content_hash: row.content_hash,
     enabled: Boolean(row.enabled),
@@ -127,7 +116,7 @@ clients.get('/:fingerprint', adminAuth, async (c) => {
       'SELECT 1 AS ok FROM nodes WHERE fingerprint = ?',
     ).bind(fingerprint).first();
     const { results } = await c.env.DB.prepare(
-      `SELECT fingerprint, name, config, server_config, params, route_rules, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
+      `SELECT fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
        FROM client_configs WHERE fingerprint = ? ORDER BY updated_at DESC LIMIT ?`,
     ).bind(fingerprint, MAX_ROWS).all<ClientConfigRow>();
 
@@ -145,7 +134,7 @@ clients.get('/:fingerprint', adminAuth, async (c) => {
 clients.get('/:fingerprint/:name', adminAuth, async (c) => {
   const { fingerprint, name } = c.req.param();
   const row = await c.env.DB.prepare(
-      `SELECT fingerprint, name, config, server_config, params, route_rules, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
+      `SELECT fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at
        FROM client_configs WHERE fingerprint = ? AND name = ?`,
     ).bind(fingerprint, name).first<ClientConfigRow>();
   if (!row) {
@@ -157,10 +146,9 @@ clients.get('/:fingerprint/:name', adminAuth, async (c) => {
 // Upsert a client owned by the given node.
 clients.put('/:fingerprint/:name', adminAuth, zValidator('json', upsertSchema), async (c) => {
   const { fingerprint, name } = c.req.param();
-  const { config, server_config, params, route_rules, protocol_type, content_hash, enabled, deployed } = c.req.valid('json');
+  const { config, server_config, params, protocol_type, content_hash, enabled, deployed } = c.req.valid('json');
   const serverConfigJson = JSON.stringify(server_config ?? {});
   const paramsJson = JSON.stringify(params ?? {});
-  const routeRulesJson = JSON.stringify(route_rules ?? []);
 
   const now = new Date().toISOString();
   const tag = extractTag(config);
@@ -219,10 +207,10 @@ clients.put('/:fingerprint/:name', adminAuth, zValidator('json', upsertSchema), 
     if (prev) {
       await c.env.DB.prepare(
         `UPDATE client_configs
-         SET config = ?, server_config = ?, params = ?, route_rules = ?, protocol_type = ?, content_hash = ?, enabled = ?, deployed = ?, port = ?, tag = ?, updated_at = ?
+         SET config = ?, server_config = ?, params = ?, protocol_type = ?, content_hash = ?, enabled = ?, deployed = ?, port = ?, tag = ?, updated_at = ?
          WHERE fingerprint = ? AND name = ?`,
       ).bind(
-        JSON.stringify(config), serverConfigJson, paramsJson, routeRulesJson, protocol_type, record.content_hash,
+        JSON.stringify(config), serverConfigJson, paramsJson, protocol_type, record.content_hash,
         record.enabled ? 1 : 0, record.deployed ? 1 : 0, port, tag, now,
         fingerprint, name,
       ).run();
@@ -231,10 +219,10 @@ clients.put('/:fingerprint/:name', adminAuth, zValidator('json', upsertSchema), 
 
     await c.env.DB.prepare(
       `INSERT INTO client_configs
-         (fingerprint, name, config, server_config, params, route_rules, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (fingerprint, name, config, server_config, params, protocol_type, content_hash, enabled, deployed, port, tag, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      fingerprint, name, JSON.stringify(config), serverConfigJson, paramsJson, routeRulesJson, protocol_type, record.content_hash,
+      fingerprint, name, JSON.stringify(config), serverConfigJson, paramsJson, protocol_type, record.content_hash,
       record.enabled ? 1 : 0, record.deployed ? 1 : 0, port, tag, now, now,
     ).run();
     return c.json({ client: record }, 201);

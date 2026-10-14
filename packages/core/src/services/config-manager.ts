@@ -7,55 +7,6 @@ function now() {
   return new Date().toISOString();
 }
 
-/** 单条配置允许的自定义路由规则数上限：防止 MB 级 JSON 无上限写入存储。 */
-export const MAX_ROUTE_RULES = 100;
-
-/** sing-box 内置出站（所有内置 overall-client 模板都提供）。 */
-const BUILTIN_OUTBOUNDS = new Set(['direct', 'proxy', 'auto']);
-
-/**
- * 自定义路由规则的语义校验（写入口统一拦截，避免渲染出 sing-box 无法启动的
- * 配置发给订阅用户）：
- * - 数量上限 MAX_ROUTE_RULES；
- * - 每条规则必须是普通对象；
- * - 带 `outbound` 字段的规则：必须是 'direct' / 'proxy' / 'auto' 或本机任一
- *   配置的 proxy tag（拼进 {{ proxy_tags }} 的那些），拼写错误直接拒绝。
- *   无 outbound 的规则（action: reject 等）不做出站校验。
- *
- * 已知边界：overall-client 模板里的分组 selector tag（如 '🧠 AI'）不在本机
- * 配置集合内，引用它们的规则会被拒绝 —— 这是「宁可在写入时报错，也不让订阅
- * 用户拿到启动失败配置」的取舍；模板专属 selector 请改用 proxy/direct/auto。
- */
-export function validateRouteRules(rules: unknown[], knownProxyTags: string[]): void {
-  if (rules.length > MAX_ROUTE_RULES) {
-    throw new AppError(
-      ERRORS.CFG_ROUTE_RULES_INVALID.code,
-      `${ERRORS.CFG_ROUTE_RULES_INVALID.message}: at most ${MAX_ROUTE_RULES} rules are allowed (got ${rules.length})`,
-      ERRORS.CFG_ROUTE_RULES_INVALID.status,
-    );
-  }
-  const allowed = new Set([...BUILTIN_OUTBOUNDS, ...knownProxyTags]);
-  rules.forEach((rule, i) => {
-    if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) {
-      throw new AppError(
-        ERRORS.CFG_ROUTE_RULES_INVALID.code,
-        `${ERRORS.CFG_ROUTE_RULES_INVALID.message}: rule #${i + 1} must be an object`,
-        ERRORS.CFG_ROUTE_RULES_INVALID.status,
-      );
-    }
-    const outbound = (rule as Record<string, unknown>).outbound;
-    if (outbound === undefined) return;
-    if (typeof outbound !== 'string' || !allowed.has(outbound)) {
-      throw new AppError(
-        ERRORS.CFG_ROUTE_RULES_INVALID.code,
-        `${ERRORS.CFG_ROUTE_RULES_INVALID.message}: rule #${i + 1} references unknown outbound '${String(outbound)}' ` +
-        `(allowed: direct, proxy, auto, or a proxy tag of this node's configs)`,
-        ERRORS.CFG_ROUTE_RULES_INVALID.status,
-      );
-    }
-  });
-}
-
 /** Extract the effective port from a config entry (server listen_port first, then client server_port). */
 export function extractConfigPort(entry: { server_config?: Record<string, unknown>; client_config?: Record<string, unknown> }): number | null {
   const raw = entry?.server_config?.listen_port ?? entry?.client_config?.server_port;
@@ -72,18 +23,16 @@ function makeEntry(
   params: Record<string, unknown>,
   enabled?: boolean,
   singboxVersion?: string,
-  routeRules?: unknown[],
 ): ConfigEntry {
   return {
     name, node, type,
     enabled: enabled ?? true,
     deployed: false,
     synced: false,
-    content_hash: computeContentHash(server, client, params, routeRules ?? []),
+    content_hash: computeContentHash(server, client, params),
     server_config: server,
     client_config: client,
     params,
-    ...(routeRules !== undefined ? { route_rules: routeRules } : {}),
     created_at: now(),
     updated_at: now(),
     ...(singboxVersion !== undefined ? { singbox_version: singboxVersion } : {}),
@@ -98,22 +47,20 @@ export class ConfigManager {
     return this.store.loadAppConfig().singbox_version || '';
   }
 
-  add(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, routeRules?: unknown[]): ConfigEntry {
+  add(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): ConfigEntry {
     if (!name) throw new AppError(ERRORS.CFG_NAME_REQUIRED.code, ERRORS.CFG_NAME_REQUIRED.message, ERRORS.CFG_NAME_REQUIRED.status);
     if (this.store.configExists(name)) throw new AppError(ERRORS.CFG_DUPLICATE.code, ERRORS.CFG_DUPLICATE.message, ERRORS.CFG_DUPLICATE.status);
     this.assertNoPortConflict(name, { server_config: server, client_config: client });
-    if (routeRules !== undefined) this.assertRouteRulesValid(routeRules);
-    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion(), routeRules);
+    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion());
     this.store.saveConfig(entry);
     return entry;
   }
 
   /** Upsert an entry built from rendered configs (used by generateAndAdd —
    *  no duplicate check: re-generating the same config overwrites it). */
-  upsert(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>, routeRules?: unknown[]): ConfigEntry {
+  upsert(name: string, node: string, type: string, server: Record<string, unknown>, client: Record<string, unknown>, params: Record<string, unknown>): ConfigEntry {
     if (!name) throw new AppError(ERRORS.CFG_NAME_REQUIRED.code, ERRORS.CFG_NAME_REQUIRED.message, ERRORS.CFG_NAME_REQUIRED.status);
-    if (routeRules !== undefined) this.assertRouteRulesValid(routeRules);
-    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion(), routeRules);
+    const entry = makeEntry(name, node, type, server, client, params, undefined, this.currentSingboxVersion());
     this.store.saveConfig(entry);
     return entry;
   }
@@ -130,7 +77,6 @@ export class ConfigManager {
     server_config: Record<string, unknown>
     client_config: Record<string, unknown>
     params: Record<string, unknown>
-    route_rules?: unknown[]
     enabled?: boolean
   }): 'restored' | 'skipped' {
     if (this.store.configExists(input.name)) return 'skipped';
@@ -139,8 +85,6 @@ export class ConfigManager {
       input.name, '', input.type,
       input.server_config, input.client_config, input.params,
       input.enabled ?? true,
-      undefined,
-      input.route_rules,
     );
     this.store.saveConfig(entry);
     this.markSynced(input.name);
@@ -154,14 +98,12 @@ export class ConfigManager {
     // 原值完全一致（含缺失状态），否则整个更新被拒绝。
     this.assertTagUnchanged('params.tag', existing.params?.tag, merged.params?.tag);
     this.assertTagUnchanged('client_config.tag', existing.client_config?.tag, merged.client_config?.tag);
-    if (data.server_config || data.client_config || data.params || data.route_rules) {
+    if (data.server_config || data.client_config || data.params) {
       this.assertNoPortConflict(name, merged);
-      if (data.route_rules !== undefined) this.assertRouteRulesValid(data.route_rules);
       const nextHash = computeContentHash(
         merged.server_config,
         merged.client_config,
         merged.params,
-        merged.route_rules ?? [],
       );
       // 内容真变更才失效同步/部署状态：键序不同但内容相同（hash 一致）的写入
       // 不应触发冗余重传与订阅下线。
@@ -186,15 +128,6 @@ export class ConfigManager {
         ERRORS.CFG_TAG_IMMUTABLE.status,
       );
     }
-  }
-
-  /** 语义校验自定义路由规则：内置出站 + 本机全部配置的 proxy tag。 */
-  private assertRouteRulesValid(rules: unknown[]): void {
-    const proxyTags = this.store
-      .listConfigs()
-      .map((e) => e.client_config?.tag)
-      .filter((t): t is string => typeof t === 'string' && t.length > 0);
-    validateRouteRules(rules, proxyTags);
   }
 
   /** Reject a new/changed config whose port collides with another config on this machine. */
@@ -277,7 +210,7 @@ export class ConfigManager {
   markSynced(name: string) {
     const entry = this.get(name);
     entry.synced = true;
-    entry.content_hash = computeContentHash(entry.server_config, entry.client_config, entry.params, entry.route_rules ?? []);
+    entry.content_hash = computeContentHash(entry.server_config, entry.client_config, entry.params);
     entry.updated_at = now();
     this.store.saveConfig(entry);
   }

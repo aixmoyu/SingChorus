@@ -418,7 +418,6 @@ export class CloudClient {
     config: Record<string, unknown>
     server_config?: Record<string, unknown>
     params?: Record<string, unknown>
-    route_rules?: unknown[]
     protocol_type: string
     content_hash: string
     enabled: boolean
@@ -431,7 +430,6 @@ export class CloudClient {
         config: data.config,
         server_config: data.server_config ?? {},
         params: data.params ?? {},
-        route_rules: data.route_rules ?? [],
         protocol_type: data.protocol_type,
         content_hash: data.content_hash,
         enabled: data.enabled,

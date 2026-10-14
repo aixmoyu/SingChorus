@@ -1,7 +1,8 @@
 /**
- * Tolerant JSON column parsers — shared by every route that reads the
- * client_configs JSON columns (server_config / params / route_rules may be
- * absent on rows created before the column existed, or corrupted).
+ * Tolerant JSON column parsers — shared by every route that reads JSON
+ * columns (client_configs server_config/params, subscriptions
+ * overall_params/route_rules, etc. — values may be absent on rows created
+ * before the column existed, or corrupted).
  */
 
 /** Parse a JSON object column (absent/malformed/non-object → {}). */

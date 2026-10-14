@@ -8,9 +8,6 @@ import { recordSchema, toCoreError } from './helpers.js'
 const router = Router()
 router.use(requireAuth)
 
-// Cap mirrors core's MAX_ROUTE_RULES — reject oversized payloads at the edge.
-const routeRulesSchema = z.array(recordSchema).max(100);
-
 const createConfigSchema = z.object({
   name: z.string().min(1).max(64),
   node: z.string().min(1).max(64),
@@ -18,14 +15,12 @@ const createConfigSchema = z.object({
   server_config: recordSchema.default({}),
   client_config: recordSchema.default({}),
   params: recordSchema.default({}),
-  route_rules: routeRulesSchema.optional(),
 })
 
 const updateConfigSchema = z.object({
   server_config: recordSchema.optional(),
   client_config: recordSchema.optional(),
   params: recordSchema.optional(),
-  route_rules: routeRulesSchema.optional(),
   node: z.string().optional(),
   enabled: z.boolean().optional(),
 })
@@ -45,9 +40,9 @@ router.post('/configs', (req, res) => {
     return
   }
   const core = getCore()
-  const { name, node, type, server_config, client_config, params, route_rules } = parsed.data
+  const { name, node, type, server_config, client_config, params } = parsed.data
   try {
-    const entry = core.configs.add(name, node, type, server_config, client_config, params, route_rules)
+    const entry = core.configs.add(name, node, type, server_config, client_config, params)
     triggerSync()
     req.log.info({ name, node, type }, 'config created')
     res.status(201).json(entry)

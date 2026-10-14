@@ -34,12 +34,6 @@ export interface ConfigEntry {
   server_config: Record<string, unknown>
   client_config: Record<string, unknown>
   params: Record<string, unknown>
-  /**
-   * 自定义路由规则（sing-box route rule 对象数组）：订阅交付时拼进
-   * overall-client 模板的 {{ route_rules }} 占位符；留空/缺省 = 无自定义规则。
-   * 计入 content_hash —— 规则变更会触发重新上传，并在重新部署前从订阅隐藏。
-   */
-  route_rules?: unknown[]
   created_at: string
   updated_at: string
   /** 配置所属节点的指纹；缺省视为本机创建（向后兼容旧数据）。 */
@@ -60,6 +54,8 @@ export interface Subscription {
   singboxVersion: string
   overallTemplateId: string | null
   overallParams: string
+  /** 订阅级自定义路由规则（sing-box route rule 对象数组）：交付时拼进 overall-client 模板的 {{ route_rules }} 占位符。 */
+  routeRules: unknown[]
   token: string
   active: boolean
   createdAt: string

@@ -535,6 +535,38 @@ describe('cloud/deploy routes against a stubbed core', () => {
     expect(seen).not.toHaveProperty('singboxVersion')
   })
 
+  it('订阅级 routeRules 原样透传给 core；形状非法 → 422', async () => {
+    let seen: unknown
+    h.behavior.createSubscription = (data) => {
+      seen = data
+      return { id: 'sub-rules' }
+    }
+    const rules = [{ domain: ['a.com'], outbound: 'proxy' }]
+    const created = await authed(request(app).post('/api/core/cloud/subscriptions'), cookie)
+      .send({ name: 'r1', path: 'r1', singboxVersion: '1.14.1', routeRules: rules })
+    expect(created.status).toBe(201)
+    expect(seen).toMatchObject({ routeRules: rules })
+
+    let updatedSeen: unknown
+    h.behavior.updateSubscription = (_id, data) => {
+      updatedSeen = data
+      return { id: 'sub-rules' }
+    }
+    const updated = await authed(request(app).put('/api/core/cloud/subscriptions/sub-rules'), cookie)
+      .send({ routeRules: [] })
+    expect(updated.status).toBe(200)
+    expect(updatedSeen).toMatchObject({ routeRules: [] })
+
+    // 超过 100 条 / 非 object 元素 → 代理层 422，不触达 core
+    const tooMany = Array.from({ length: 101 }, () => ({ outbound: 'direct' }))
+    const badMany = await authed(request(app).put('/api/core/cloud/subscriptions/sub-rules'), cookie)
+      .send({ routeRules: tooMany })
+    expect(badMany.status).toBe(422)
+    const badShape = await authed(request(app).put('/api/core/cloud/subscriptions/sub-rules'), cookie)
+      .send({ routeRules: ['nope'] })
+    expect(badShape.status).toBe(422)
+  })
+
   // --- remote configs ---
 
   it('lists / loads / deletes remote configs with correct 404 + sync wiring', async () => {

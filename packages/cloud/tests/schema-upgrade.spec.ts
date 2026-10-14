@@ -80,12 +80,46 @@ describe('legacy schema upgrade', () => {
        VALUES ('fp1', 'n1', '{}', '{}', '{}', 'singbox', 'h', 1, 0, NULL, 'tag1', datetime('now'), datetime('now'))`,
     ).run();
     const row = await db.prepare(
-      'SELECT server_config, params, route_rules FROM client_configs WHERE fingerprint = ?',
-    ).bind('fp1').first<{ server_config: string; params: string; route_rules: string }>();
+      'SELECT server_config, params FROM client_configs WHERE fingerprint = ?',
+    ).bind('fp1').first<{ server_config: string; params: string }>();
     expect(JSON.parse(row!.server_config)).toEqual({});
     expect(JSON.parse(row!.params)).toEqual({});
-    // route_rules (added later) gets its NOT NULL DEFAULT '[]' — the sync upsert
-    // and the delivery SELECT both reference the column unconditionally.
+  });
+
+  /**
+   * Subscription-level route rules (2026-10-14): the column moved from
+   * client_configs to subscriptions — legacy databases (pre-migration) get it
+   * via ALTER_TABLES; the delivery INSERT/UPDATE reference it unconditionally.
+   */
+  it('adds subscriptions.route_rules to a pre-route-rules database', async () => {
+    const db = (env as any).DB as D1Database;
+
+    await db.prepare('DROP TABLE IF EXISTS subscriptions').run();
+    await db.prepare(`CREATE TABLE subscriptions (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      type TEXT NOT NULL DEFAULT 'singbox',
+      singbox_version TEXT NOT NULL,
+      overall_template_id TEXT DEFAULT NULL,
+      overall_params TEXT NOT NULL DEFAULT '{}',
+      token TEXT NOT NULL UNIQUE,
+      active TEXT NOT NULL DEFAULT '1',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+
+    resetDatabaseInitCache();
+    await initializeDatabase(db);
+
+    // The exact INSERT the subscription-create route performs must succeed.
+    await db.prepare(
+      `INSERT INTO subscriptions (id, name, path, type, singbox_version, overall_template_id, overall_params, route_rules, token, active)
+       VALUES ('r1', 'n', 'p1', 'singbox', '1.12.0', NULL, '{}', '[]', 'tok-0123456789abcdef', '1')`,
+    ).run();
+    const row = await db.prepare(
+      'SELECT route_rules FROM subscriptions WHERE id = ?',
+    ).bind('r1').first<{ route_rules: string }>();
     expect(JSON.parse(row!.route_rules)).toEqual([]);
   });
 

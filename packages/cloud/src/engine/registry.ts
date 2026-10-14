@@ -16,9 +16,6 @@ export interface ProtocolInstanceConfig {
   id: string;
   serverConfig: Record<string, unknown>;
   clientConfig: Record<string, unknown>;
-  /** Optional custom route rules contributed to the client template's
-   *  `{{ route_rules }}` splice point (absent/empty → nothing spliced). */
-  routeRules?: unknown[];
 }
 
 function normalizeToken(s: string): string {
@@ -282,13 +279,15 @@ export class PluginRegistry {
 
   /**
    * Shared overall-template rendering for both sides. Server templates splice
-   * `{{ protocols }}`; client templates additionally splice `{{ proxy_tags }}`.
+   * `{{ protocols }}`; client templates additionally splice `{{ proxy_tags }}`
+   * and the subscription-level `routeRules` at `{{ route_rules }}`.
    */
   private async renderOverall(
     instances: ProtocolInstanceConfig[],
     overallId: string,
     overallParams: Record<string, unknown>,
     side: 'server' | 'client',
+    routeRules?: unknown[],
   ): Promise<Record<string, unknown>> {
     const overall = this.getOverallTemplate(overallId);
     if (!overall) throw new PluginError('PLG_UNKNOWN_TYPE', `Overall template not found: ${overallId}`);
@@ -308,29 +307,49 @@ export class PluginRegistry {
       replacements[normalizeToken('{{ proxy_tags }}')] = instances
         .map((i) => i.clientConfig.tag)
         .filter((t): t is string => typeof t === 'string' && t.length > 0);
-      // Custom per-config route rules: always registered (possibly empty) so an
-      // unused `{{ route_rules }}` splice point is removed from the rules array
-      // instead of surviving as a literal placeholder element.
-      replacements[normalizeToken('{{ route_rules }}')] = instances.flatMap(
-        (i) => (Array.isArray(i.routeRules) ? i.routeRules : []),
-      );
+      // Subscription-level route rules: always registered (possibly empty) so
+      // an unused `{{ route_rules }}` splice point is removed from the rules
+      // array instead of surviving as a literal placeholder element.
+      replacements[normalizeToken('{{ route_rules }}')] = routeRules ?? [];
     }
 
     const resolved = resolveAndValidate(paramDefs as any, overallParams);
     const parsedTemplate = p.templateContent ?? JSON.parse(overall.templateContent);
     if (side === 'client') {
-      // 可观测性（B3）：实例携带了自定义规则、但模板没有 {{ route_rules }} 拼接点
-      // 时，规则会被 splice 静默丢弃——打 warn 让管理员能在日志里定位，而不是
-      // 交付出去的配置「看起来正常却没有生效规则」。
-      const ruleCount = instances.reduce(
-        (n, i) => n + (Array.isArray(i.routeRules) ? i.routeRules.length : 0),
-        0,
-      );
-      if (ruleCount > 0 && !containsToken(parsedTemplate, ROUTE_RULES_TOKEN)) {
-        this.logger?.warn(
-          'overall-client template has no {{ route_rules }} splice point — custom route rules were not applied',
-          { template: overallId, rules: ruleCount, instances: instances.length },
-        );
+      const ruleCount = routeRules?.length ?? 0;
+      if (ruleCount > 0) {
+        if (!containsToken(parsedTemplate, ROUTE_RULES_TOKEN)) {
+          // 可观测性（B3）：订阅携带了自定义规则、但模板没有 {{ route_rules }}
+          // 拼接点时，规则会被 splice 静默丢弃——打 warn 让管理员能在日志里
+          // 定位，而不是交付出去的配置「看起来正常却没有生效规则」。
+          this.logger?.warn(
+            'overall-client template has no {{ route_rules }} splice point — custom route rules were not applied',
+            { template: overallId, rules: ruleCount, instances: instances.length },
+          );
+        } else {
+          // outbound 白名单告警（best-effort）：规则的 outbound 不在
+          // direct/proxy/auto 与被交付实例 outbound tag 的并集里 → 大概率是
+          // 引用了模板生成的 selector 分组或拼写错误。订阅级无法在写入时预知
+          // 交付 outbound 集合（实例可后改），故在渲染时告警而不阻断。
+          const known = new Set<string>(['direct', 'proxy', 'auto']);
+          for (const i of instances) {
+            const tag = (i.clientConfig as { tag?: unknown }).tag;
+            if (typeof tag === 'string' && tag.length > 0) known.add(tag);
+          }
+          const unknownOutbounds = new Set<string>();
+          for (const rule of routeRules ?? []) {
+            const outbound = (rule as { outbound?: unknown } | null)?.outbound;
+            if (typeof outbound === 'string' && outbound.length > 0 && !known.has(outbound)) {
+              unknownOutbounds.add(outbound);
+            }
+          }
+          if (unknownOutbounds.size > 0) {
+            this.logger?.warn(
+              'route rules reference outbounds not present in the delivered config — they may target template-generated selector groups or contain typos',
+              { template: overallId, rules: ruleCount, unknownOutbounds: [...unknownOutbounds] },
+            );
+          }
+        }
       }
     }
     const spliced = splicePlaceholders(parsedTemplate, replacements);
@@ -349,8 +368,9 @@ export class PluginRegistry {
     instances: ProtocolInstanceConfig[],
     overallId: string,
     overallParams: Record<string, unknown>,
+    routeRules?: unknown[],
   ): Promise<Record<string, unknown>> {
-    return this.renderOverall(instances, overallId, overallParams, 'client');
+    return this.renderOverall(instances, overallId, overallParams, 'client', routeRules);
   }
 
   async renderDocker(
