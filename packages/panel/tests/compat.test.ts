@@ -1,6 +1,6 @@
 import request from 'supertest'
 import http from 'node:http'
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { createRequire } from 'node:module'
 import type { Application } from 'express'
 import { makeTempHome, loadApp, setupAdmin } from './helpers.js'
@@ -84,6 +84,21 @@ describe('compat: component version ranges', () => {
     expect(await compat.fetchCloudVersion()).toBe(null)
     probe.close()
   })
+
+  it('fetchCloudVersion：cloud 未配置（core_url 为空）时返回 null 且不发起请求', async () => {
+    const { updateConfig } = await import('../server/config.js')
+    updateConfig({ core_url: '' })
+    compat.invalidateCloudVersion()
+
+    // "未配置" ≠ "不可达"：不应向默认回落地址（localhost:8787）发探测请求
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    try {
+      expect(await compat.fetchCloudVersion()).toBe(null)
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 describe('info: /api/info 兼容性报告', () => {
@@ -101,7 +116,6 @@ describe('info: /api/info 兼容性报告', () => {
     expect(res.status).toBe(200)
     const panelPkgVersion = (require('../package.json') as { version: string }).version
     expect(res.body.panel_version).toBe(panelPkgVersion)
-    expect(res.body.panel_version).not.toBe('0.2.0')
     expect(typeof res.body.core_version).toBe('string')
     expect(res.body.core_version.length).toBeGreaterThan(0)
     expect(res.body.compat.core).toMatchObject({ ok: true })

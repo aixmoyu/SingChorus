@@ -97,6 +97,11 @@ panel 启动时会校验所加载 `@chorus/core` 的版本、运行期探测 clo
 2. 更新 `packages/panel/server/compat.ts` 的对应范围——core 版本 bump 出范围而未更新时，panel 的 compat 测试会变红作为提醒；
 3. 发布顺序保持 core → panel/ctl。
 
+两条硬约束：
+
+- **不支持 prerelease 版本号**：一致性测试只接受 `x.y.z`（`^\d+\.\d+\.\d+$`），且 `semver.satisfies` 默认将 prerelease 视为不匹配任何范围——发 `0.1.1-beta.1` 会同时导致测试变红与运行时告警。如需 prerelease，需先放宽一致性测试的正则并给 `semver.satisfies` 传 `{ includePrerelease: true }`。
+- **panel 的测试/类型检查依赖 core 的 dist**：`server/index.ts`、`routes/info.ts` 静态 `import { CORE_VERSION } from '@chorus/core'`（解析 dist），新 clone 直接跑 `pnpm -C packages/panel test` 会失败，须先 `pnpm -C packages/core build`（`pnpm -r test` 前先 `pnpm -r build`）。
+
 ## 终端用户使用（发布后）
 
 无需克隆仓库，`npx` 自动下载执行（包内含预编译产物，零构建）：

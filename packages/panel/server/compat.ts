@@ -1,4 +1,5 @@
 import semver from 'semver'
+import { loadConfig } from './config.js'
 import { resolveCloudUrl } from './core-provider.js'
 import { logger } from './logger.js'
 
@@ -41,11 +42,15 @@ let cloudProbe: { promise: Promise<string | null>; at: number } | null = null
 
 /**
  * Best-effort probe of the cloud's version via the public /health endpoint.
- * Results are cached for 60s (with in-flight promise de-duplication) so
- * /api/info is never slowed down by an unreachable cloud beyond one probe.
- * Returns null when the cloud is unreachable or returned no version.
+ * Returns null when the cloud is not configured, unreachable, or returned no
+ * version. Results are cached for 60s (with in-flight promise de-duplication)
+ * so /api/info is never slowed down by an unreachable cloud beyond one probe.
  */
 export async function fetchCloudVersion(): Promise<string | null> {
+  // Cloud not configured (empty core_url — resolveCloudUrl would fall back to
+  // DEFAULT_CLOUD_URL): "not configured" is not "unreachable", so skip the
+  // probe entirely instead of hammering the default address every TTL.
+  if (!loadConfig().core_url?.trim()) return null
   if (cloudProbe && Date.now() - cloudProbe.at < CLOUD_PROBE_TTL_MS) {
     return cloudProbe.promise
   }

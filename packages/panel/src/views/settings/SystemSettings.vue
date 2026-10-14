@@ -22,7 +22,7 @@
               (supported: {{ info.compat.cloud.range }})
             </span>
           </template>
-          <template v-else>Unknown (cloud unreachable)</template>
+          <template v-else>Unknown (cloud not configured or unreachable)</template>
         </n-descriptions-item>
         <n-descriptions-item label="Framework">{{ info.framework }}</n-descriptions-item>
       </n-descriptions>

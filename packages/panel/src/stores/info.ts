@@ -29,8 +29,17 @@ export const useInfoStore = defineStore('info', () => {
   const systemInfo = ref<SystemInfo | null>(null)
 
   async function fetchSystemInfo() {
-    const res = await http.get('/info')
-    systemInfo.value = res.data
+    try {
+      const res = await http.get('/info')
+      systemInfo.value = res.data
+    } catch (err) {
+      // Session expired: drop stale data so the CompatBanner cannot keep
+      // rendering an old mismatch report on the login page ("401 时静默不显示").
+      if ((err as { response?: { status?: number } })?.response?.status === 401) {
+        systemInfo.value = null
+      }
+      throw err
+    }
   }
 
   return { systemInfo, fetchSystemInfo }

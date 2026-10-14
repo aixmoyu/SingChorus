@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import http from '@/lib/http'
+import { useInfoStore } from '@/stores/info'
 
 export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false)
@@ -37,6 +38,9 @@ export const useAuthStore = defineStore('auth', () => {
   async function logout() {
     await http.post('/auth/logout')
     isAuthenticated.value = false
+    // Drop cached system info (versions / compat report) so the CompatBanner
+    // cannot linger on the login page with data from the previous session.
+    useInfoStore().systemInfo = null
   }
 
   async function changePassword(oldPassword: string, newPassword: string) {

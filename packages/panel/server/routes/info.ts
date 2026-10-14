@@ -10,6 +10,10 @@ const router = Router()
 router.use(requireAuth)
 
 router.get('/', async (_req, res) => {
+  // Express 4 does NOT catch rejected async handlers — anything thrown here
+  // (outside the try/catch below) would hang the request instead of 500-ing.
+  // fetchCloudVersion never rejects (all errors are caught internally), so
+  // keep it that way or wrap new awaiting calls accordingly.
   const storeDir = getStoreDirPath()
   let configCount = 0
   let sync: ReturnType<typeof getSyncService>['status'] | null = null

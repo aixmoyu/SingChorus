@@ -24,7 +24,7 @@ panel 同进程加载 `@chorus/core` 的 dist（`workspace:*` 依赖），并远
 ### 2. cloud（@chorus/cloud）
 - 新建 `packages/cloud/src/version.ts`：`CLOUD_VERSION = '0.1.0'`。
 - [index.ts /health](file:///Users/li/Projects/SingChorus/packages/cloud/src/index.ts#L58-L60) 返回 `{ status, service, version: CLOUD_VERSION }`。
-- 测试：现有 health 用例补断言 `version` 非空；一致性测试放 node 组（workerd 内无 fs），新建 `tests/version.node.spec.ts`（先确认 vitest.node 配置 include 覆盖）。
+- 测试：现有 health 用例补断言 `version` 非空；一致性测试放 node 组（workerd 内无 fs），新建 `tests/node/version.spec.ts`（vitest.config.node.ts include `tests/node/**/*.spec.ts` 已覆盖）。
 
 ### 3. panel server
 - 依赖：`pnpm -C packages/panel add semver && pnpm -C packages/panel add -D @types/semver`。
@@ -32,7 +32,7 @@ panel 同进程加载 `@chorus/core` 的 dist（`workspace:*` 依赖），并远
 - 新建 `packages/panel/server/compat.ts`（**兼容范围单点声明**）：
   - `SUPPORTED_CORE_RANGE = '>=0.1.0 <0.2.0'`、`SUPPORTED_CLOUD_RANGE = '>=0.1.0 <0.2.0'`
   - `checkCoreVersion(v)` / `checkCloudVersion(v)`：`semver.satisfies` + 非法值处理，返回 `{ ok, version, range }`
-  - `fetchCloudVersion(cloudUrl, timeoutMs=3000)`：panel 直接 `fetch ${cloud_url}/health`（公开端点，无需走 core CloudClient——那是同步/部署授权通道），模块级 Promise 缓存 + 60s TTL，失败返回 null；settings 改 cloud_url 时清缓存
+  - `fetchCloudVersion()`：panel 直接 `fetch ${resolveCloudUrl()}/health`（公开端点，无需走 core CloudClient——那是同步/部署授权通道），模块级 Promise 缓存 + 60s TTL，失败返回 null；settings 改 cloud_url 时清缓存；`core_url` 为空（未配置）时直接返回 null 不探测——"未配置"≠"不可达"
   - `isStrictCompat()`：`CHORUS_PANEL_STRICT_COMPAT === '1'`
 - [index.ts](file:///Users/li/Projects/SingChorus/packages/panel/server/index.ts)：`startServer()` 内 listen **之前**校验 core——不匹配 `logger.warn({core_version, range})`；strict 且不匹配 → `logger.error` + `process.exit(1)`（listen 前无 socket，无需优雅关闭；不放 createApp，避免测试触发 exit）。
 - [routes/info.ts](file:///Users/li/Projects/SingChorus/packages/panel/server/routes/info.ts) 改 async，响应扩展：
@@ -55,7 +55,7 @@ panel 同进程加载 `@chorus/core` 的 dist（`workspace:*` 依赖），并远
 
 ## 测试计划（vitest + supertest，沿用 helpers.loadApp：makeTempHome 后动态 import）
 - core `tests/version.spec.ts`：CORE_VERSION 与 package.json 一致。
-- cloud：health 用例扩展 + `tests/version.node.spec.ts` 一致性。
+- cloud：health 用例扩展 + `tests/node/version.spec.ts` 一致性。
 - panel `tests/compat.test.ts`：range 边界（0.1.0 过 / 0.2.0 拒 / 非法串拒）、strict env 解析、`satisfies(CORE_VERSION, range)` 出范围变红机制。
 - panel `tests/info.test.ts`：/api/info 返回 `panel_version` === 包版本（钉死硬编码 bug）、`core_version` 非空、cloud 不可达时 `cloud_version=null` 且 `compat.cloud.ok=null`。
 
