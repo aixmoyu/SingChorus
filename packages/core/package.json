@@ -1,6 +1,6 @@
 {
   "name": "@chorus/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "SingChorus core engine: config storage, cloud sync and Docker deploy",
   "license": "MIT",
   "repository": {
