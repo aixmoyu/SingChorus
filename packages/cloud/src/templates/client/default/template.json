@@ -4,17 +4,24 @@
     "timestamp": true
   },
   "experimental": {
-    "clash_api": {
-      "secret": "admin",
-      "external_controller": "0.0.0.0:9090",
-      "external_ui": "./ui",
-      "external_ui_download_url": "https://gh-proxy.org/https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip",
-      "default_mode": "Enhanced"
-    },
     "cache_file": {
       "enabled": true
     }
   },
+  "services": [
+    {
+      "type": "api",
+      "tag": "api-sv",
+      "listen": "127.0.0.1",
+      "listen_port": 9090,
+      "secret": "admin",
+      "dashboard": {
+        "enabled": true,
+        "download_url": "https://gh-proxy.org/https://github.com/SagerNet/sing-box-dashboard/archive/refs/heads/gh-pages.zip"
+      },
+      "tls": {}
+    }
+  ],
   "ntp": {
     "enabled": true,
     "interval": "30m0s",
@@ -76,11 +83,6 @@
       "address": [
         "172.19.0.1/30",
         "fdfe:dcba:9876::1/126"
-      ],
-      "route_exclude_address": [
-        "192.168.0.0/16",
-        "172.16.0.0/12",
-        "fc00::/7"
       ],
       "mtu": 9000,
       "auto_route": true,
@@ -292,6 +294,7 @@
     "auto_detect_interface": true,
     "final": "proxy",
     "rules": [
+      "{{ route_rules }}",
       {
         "rule_set": [
           "geoip-private",
@@ -322,7 +325,7 @@
         "action": "reject"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "mousegesturesapi.com",
           "cf-se.com",
           "googleads.g.double-click.net",
@@ -363,7 +366,7 @@
         "outbound": "🥞 Google"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "googleapis.cn",
           "gstatic.com"
         ],
@@ -522,7 +525,7 @@
         "outbound": "🌏 !cn"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "gh-proxy.com",
           "gh-proxy.org",
           "cdn.jsdelivr.net",
@@ -532,7 +535,7 @@
         "outbound": "🇨🇳 cn"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "alidns.com",
           "doh.pub",
           "dot.pub",

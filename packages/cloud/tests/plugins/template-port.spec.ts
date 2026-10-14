@@ -190,8 +190,13 @@ describe('template port verification', () => {
     const routeRules = [{ domain: ['example.com'], outbound: 'direct' }];
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 
-    // client-default 模板没有 route_rules 拼接点（内置种子中仅 default-ts 有）
-    const db = makeMockDB([mkRow('client-default', 'overall-client', clientTemplate)]);
+    // 自造无拼接点模板：剥掉 route.rules 里所有裸 splice 占位符字符串元素
+    // （机制级泛化，不点名具体关键字，模板带不带占位符均成立）
+    const noSpliceTemplate: any = JSON.parse(JSON.stringify(clientTemplate));
+    noSpliceTemplate.route.rules = noSpliceTemplate.route.rules.filter(
+      (r: any) => !(typeof r === 'string' && /^\s*\{\{\s*\S+\s*\}\}\s*$/.test(r)),
+    );
+    const db = makeMockDB([mkRow('client-default', 'overall-client', noSpliceTemplate)]);
     const reg = new PluginRegistry(db, logger as any);
     await reg.loadAll();
     await reg.renderClientOverall([{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' } }], 'client-default', {}, routeRules);

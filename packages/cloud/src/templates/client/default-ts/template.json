@@ -358,7 +358,7 @@
         "action": "reject"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "mousegesturesapi.com",
           "cf-se.com",
           "googleads.g.double-click.net",
@@ -399,7 +399,7 @@
         "outbound": "🥞 Google"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "googleapis.cn",
           "gstatic.com"
         ],
@@ -558,7 +558,7 @@
         "outbound": "🌏 !cn"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "gh-proxy.com",
           "gh-proxy.org",
           "cdn.jsdelivr.net",
@@ -568,7 +568,7 @@
         "outbound": "🇨🇳 cn"
       },
       {
-        "domain": [
+        "domain_suffix": [
           "alidns.com",
           "doh.pub",
           "dot.pub",
