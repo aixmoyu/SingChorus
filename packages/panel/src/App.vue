@@ -2,6 +2,7 @@
   <n-config-provider :theme-overrides="notionThemeOverrides">
     <n-message-provider>
       <n-dialog-provider>
+        <CompatBanner />
         <router-view />
       </n-dialog-provider>
     </n-message-provider>
@@ -11,6 +12,7 @@
 <script setup lang="ts">
 import { NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui'
 import { notionThemeOverrides } from './styles/naive-theme'
+import CompatBanner from './components/CompatBanner.vue'
 </script>
 
 <style>

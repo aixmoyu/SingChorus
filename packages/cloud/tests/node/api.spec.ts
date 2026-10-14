@@ -69,7 +69,10 @@ describe('node runtime: API contract over SQLite adapters', () => {
   it('GET /health', async () => {
     const res = await api(env, '/health');
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { status: string }).status).toBe('ok');
+    const body = (await res.json()) as { status: string; version: string };
+    expect(body.status).toBe('ok');
+    expect(typeof body.version).toBe('string');
+    expect(body.version.length).toBeGreaterThan(0);
   });
 
   it('auth: rejects bad token; issues a JWT valid against the D1 revocation table', async () => {

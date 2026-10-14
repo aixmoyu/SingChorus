@@ -67,6 +67,8 @@ describe('ChorusCloud Worker', () => {
       const body = await res.json() as any;
       expect(body.status).toBe('ok');
       expect(body.service).toBe('chorus-cloud');
+      expect(typeof body.version).toBe('string');
+      expect(body.version.length).toBeGreaterThan(0);
     });
   });
 

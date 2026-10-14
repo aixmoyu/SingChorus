@@ -9,6 +9,21 @@
         <n-descriptions-item label="Data Directory">{{ info.data_dir }}</n-descriptions-item>
         <n-descriptions-item label="Config Count">{{ info.config_count }}</n-descriptions-item>
         <n-descriptions-item label="Panel Version">{{ info.panel_version }}</n-descriptions-item>
+        <n-descriptions-item label="Core Version">
+          {{ info.core_version }}
+          <span v-if="info.compat?.core?.ok === false" class="version-mismatch">
+            (supported: {{ info.compat.core.range }})
+          </span>
+        </n-descriptions-item>
+        <n-descriptions-item label="Cloud Version">
+          <template v-if="info.cloud_version">
+            {{ info.cloud_version }}
+            <span v-if="info.compat?.cloud?.ok === false" class="version-mismatch">
+              (supported: {{ info.compat.cloud.range }})
+            </span>
+          </template>
+          <template v-else>Unknown (cloud unreachable)</template>
+        </n-descriptions-item>
         <n-descriptions-item label="Framework">{{ info.framework }}</n-descriptions-item>
       </n-descriptions>
       <n-spin v-else />
@@ -202,3 +217,10 @@ onMounted(async () => {
   subscriptionStore.fetchSubscriptions().catch(() => { /* non-blocking */ })
 })
 </script>
+
+<style scoped>
+.version-mismatch {
+  color: var(--color-warning, #b45309);
+  font-size: 0.85em;
+}
+</style>

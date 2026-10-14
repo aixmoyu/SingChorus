@@ -132,6 +132,9 @@ importers:
       pino-http:
         specifier: ^11.0.0
         version: 11.0.0
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
       vfonts:
         specifier: ^0.0.3
         version: 0.0.3
@@ -169,6 +172,9 @@ importers:
       '@types/node':
         specifier: ^22.7.5
         version: 22.20.3
+      '@types/semver':
+        specifier: ^7.8.0
+        version: 7.8.0
       '@types/supertest':
         specifier: ^6.0.2
         version: 6.0.3
@@ -250,6 +256,7 @@ packages:
 
   '@cloudflare/vitest-pool-workers@0.8.71':
     resolution: {integrity: sha512-keu2HCLQfRNwbmLBCDXJgCFpANTaYnQpE01fBOo4CNwiWHUT7SZGN7w64RKiSWRHyYppStXBuE5Ng7F42+flpg==}
+    deprecated: '@cloudflare/vitest-pool-workers has been renamed to @cloudflare/vitest-plugin. This package will not receive future updates.'
     peerDependencies:
       '@vitest/runner': 2.0.x - 3.2.x
       '@vitest/snapshot': 2.0.x - 3.2.x

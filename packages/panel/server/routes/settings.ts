@@ -3,6 +3,7 @@ import { loadConfig, updateConfig } from '../config.js'
 import { requireAuth } from '../auth.js'
 import { getCore, invalidateCore, resolveCloudUrl, triggerSync, ensureSyncTimer } from '../core-provider.js'
 import { toErrorEnvelope, toValidationError } from '../api-error.js'
+import { invalidateCloudVersion } from '../compat.js'
 import { CloudClient } from '@chorus/core'
 import { z } from 'zod'
 
@@ -48,6 +49,8 @@ router.post('/', (req, res) => {
   const cfg = updateConfig(updates)
   // Drop the cached ChorusCore instance so the next request picks up the new URL/token.
   invalidateCore()
+  // A new cloud target may report a different version — drop the cached probe.
+  invalidateCloudVersion()
   // Mirror node identity + cloud settings into core's app config (used by sync).
   const core = getCore()
   core.updateAppConfig({

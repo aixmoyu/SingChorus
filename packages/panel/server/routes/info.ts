@@ -2,11 +2,14 @@ import { Router } from 'express'
 import { requireAuth } from '../auth.js'
 import { getStoreDirPath, isInitialized } from '../config.js'
 import { getCore, getSyncService } from '../core-provider.js'
+import { CORE_VERSION } from '@chorus/core'
+import { PANEL_VERSION } from '../version.js'
+import { checkCoreVersion, checkCloudVersion, fetchCloudVersion, isStrictCompat, SUPPORTED_CLOUD_RANGE } from '../compat.js'
 
 const router = Router()
 router.use(requireAuth)
 
-router.get('/', (_req, res) => {
+router.get('/', async (_req, res) => {
   const storeDir = getStoreDirPath()
   let configCount = 0
   let sync: ReturnType<typeof getSyncService>['status'] | null = null
@@ -19,11 +22,24 @@ router.get('/', (_req, res) => {
   } catch {
     /* core not initialized yet */
   }
+  // Component compatibility report: core is checked synchronously (static
+  // import), cloud is probed best-effort (null version = unreachable/unknown,
+  // reported as ok:null so the UI does not raise a false alarm).
+  const cloudVersion = await fetchCloudVersion()
   res.json({
     data_dir: storeDir,
     config_count: configCount,
     sync,
-    panel_version: '0.2.0',
+    panel_version: PANEL_VERSION,
+    core_version: CORE_VERSION,
+    cloud_version: cloudVersion,
+    compat: {
+      core: checkCoreVersion(CORE_VERSION),
+      cloud: cloudVersion === null
+        ? { version: null, range: SUPPORTED_CLOUD_RANGE, ok: null }
+        : checkCloudVersion(cloudVersion),
+      strict: isStrictCompat(),
+    },
     framework: 'Vue 3 + Express',
   })
 })

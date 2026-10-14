@@ -14,6 +14,7 @@ import { users } from './routes/users';
 import { tags } from './routes/tags';
 import { PluginError } from './engine/errors';
 import { createLogger } from './logger';
+import { CLOUD_VERSION } from './version';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -56,7 +57,7 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/health', (c) => {
-  return c.json({ status: 'ok', service: 'chorus-cloud' });
+  return c.json({ status: 'ok', service: 'chorus-cloud', version: CLOUD_VERSION });
 });
 
 app.route('/api/protocols', protocols);

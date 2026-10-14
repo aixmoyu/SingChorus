@@ -87,6 +87,16 @@ npx @chorus/panel start --help
 npx @chorus/ctl --help
 ```
 
+### 组件版本兼容性约定（破坏性修改必读）
+
+panel 启动时会校验所加载 `@chorus/core` 的版本、运行期探测 cloud `/health` 的版本，是否落在 `packages/panel/server/compat.ts` 声明的支持范围内（`SUPPORTED_CORE_RANGE` / `SUPPORTED_CLOUD_RANGE`）。默认不匹配仅告警（日志 + `/api/info` + Web 横幅提示管理员升级）；设置 `CHORUS_PANEL_STRICT_COMPAT=1` 时 core 不匹配将拒绝启动（cloud 不可达只报 unknown，不强判）。
+
+因此出现破坏性修改时必须同步维护该机制：
+
+1. bump 对应包的 `version`（core 的 `CORE_VERSION`、cloud 的 `CLOUD_VERSION` 常量与各自 package.json 由测试钉住一致性，改 package.json 后同步改常量）；
+2. 更新 `packages/panel/server/compat.ts` 的对应范围——core 版本 bump 出范围而未更新时，panel 的 compat 测试会变红作为提醒；
+3. 发布顺序保持 core → panel/ctl。
+
 ## 终端用户使用（发布后）
 
 无需克隆仓库，`npx` 自动下载执行（包内含预编译产物，零构建）：

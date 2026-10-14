@@ -1,3 +1,4 @@
+export { CORE_VERSION } from './version.js';
 export { ChorusCore } from './core.js';
 export { LocalStore, DEFAULT_APP_CONFIG } from './services/store.js';
 export { ConfigManager } from './services/config-manager.js';
