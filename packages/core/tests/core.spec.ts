@@ -245,6 +245,30 @@ describe('ChorusCore.syncAllToCloud（双向对账）', () => {
     cloud.uploadNodeClient.mockImplementation(async () => ({}));
   });
 
+  it('route_rules 变更 → 重新上传并携带规则；未变更不冗余上传', async () => {
+    await steadyState();
+    core.configs.add('rules-sync', 'default', 'hysteria2',
+      { type: 'hysteria2', listen_port: 9704 }, {}, {},
+      [{ domain: ['a.com'], outbound: 'direct' }]);
+
+    const res = await core.syncAllToCloud();
+    expect(res.synced).toBe(1);
+    expect(cloud.uploadNodeClient.mock.lastCall![0].route_rules)
+      .toEqual([{ domain: ['a.com'], outbound: 'direct' }]);
+    cloud.getClients.mockResolvedValue(cloudListSnapshot());
+
+    // 内容（含规则）无变更 → 下一轮不推
+    const res2 = await core.syncAllToCloud();
+    expect(res2.synced).toBe(0);
+
+    // 仅规则变更 → hash 变化 → 重新上传（携带新规则）
+    core.configs.update('rules-sync', { route_rules: [{ domain: ['b.com'], outbound: 'proxy' }] });
+    const res3 = await core.syncAllToCloud();
+    expect(res3.synced).toBe(1);
+    expect(cloud.uploadNodeClient.mock.lastCall![0].route_rules)
+      .toEqual([{ domain: ['b.com'], outbound: 'proxy' }]);
+  });
+
   it('拉取预算内挂起的远端节点不会阻塞整轮（core-P3）', async () => {
     await steadyState();
     vi.useFakeTimers();

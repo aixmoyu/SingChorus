@@ -7,6 +7,7 @@ import { PluginError } from '../engine/errors';
 import { isValidSingboxVersion, isCompatSatisfied } from '../engine/compat';
 import { parseSubscriptionRow, type SubscriptionRow } from '../engine/types';
 import { outboundToShareUrl } from '../engine/share-urls';
+import { safeParseArray } from '../services/safe-parse';
 import { hashToken } from '../auth/jwt';
 import { fireAndForget } from '../services/fire-and-forget';
 import type { Logger } from '../logger';
@@ -128,17 +129,6 @@ interface LoadedConfig extends ProtocolInstanceConfig {
   protocolId?: string;
 }
 
-/** Parse a client_configs.route_rules JSON column (absent/malformed → []). */
-function parseRouteRules(json: string | undefined): unknown[] {
-  if (!json) return [];
-  try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig[]> {
   if (configsCache && Date.now() - configsCache.at < CONFIGS_TTL_MS) {
     return configsCache.configs as LoadedConfig[];
@@ -157,7 +147,7 @@ async function loadConfigsFromD1(env: Env, logger: Logger): Promise<LoadedConfig
             serverConfig: {},
             clientConfig: parsed,
             protocolId: row.protocol_type || undefined,
-            routeRules: parseRouteRules(row.route_rules),
+            routeRules: safeParseArray(row.route_rules),
           });
         }
       } catch { /* malformed row — skip */ }
@@ -240,6 +230,24 @@ subscriptions.get('/s/:path', async (c) => {
     ).all<Record<string, unknown>>();
 
     if (instanceRows && instanceRows.length > 0) {
+      // 已知限制（B2）：protocol_instances 表没有 route_rules 列（云侧实例管理
+      // 路径无规则编辑 UI）——本交付路径永远不带自定义规则。若同一部署同时有
+      // 已同步的 client_configs 带着非空规则，规则会被这里静默跳过：打一条
+      // warn 让管理员能在日志里发现，而不是无声失效。
+      try {
+        const withRules = await c.env.DB.prepare(
+          `SELECT 1 FROM client_configs
+           WHERE deployed = 1 AND enabled = 1
+             AND route_rules IS NOT NULL AND route_rules NOT IN ('', '[]')
+           LIMIT 1`,
+        ).first();
+        if (withRules) {
+          c.get('logger').warn(
+            'subscription delivery: serving protocol_instances which carry no route_rules — custom route rules on synced client configs are not applied in this delivery path',
+            { path },
+          );
+        }
+      } catch { /* best-effort diagnostics — never block delivery */ }
       configs = instanceRows.map((row: any) => ({
         id: row.id,
         serverConfig: row.server_config ? JSON.parse(row.server_config) : {},
@@ -266,7 +274,7 @@ subscriptions.get('/s/:path', async (c) => {
       ?? c.json({ error: { code: 'DB_UNAVAILABLE', message: 'Database temporarily unavailable' } }, 503);
   }
 
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
 
   // url 型订阅（分享链接交付）：不绑定 sing-box 版本 / overall 模板——把每个
   // instance 的客户端 outbound 转成标准分享链接（vless:// hysteria2:// ...），

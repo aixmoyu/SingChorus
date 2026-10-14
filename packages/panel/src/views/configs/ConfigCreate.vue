@@ -85,7 +85,7 @@
                 placeholder='[{"domain": ["example.com"], "outbound": "direct"}]'
               />
               <template #feedback>
-                {{ routeRulesError || 'Optional — a JSON array of sing-box route rules spliced into the subscription\'s client config. Leave empty for none.' }}
+                {{ routeRulesError || 'Optional — a JSON array of sing-box route rules spliced into the subscription\'s client config at delivery time. A rule\'s outbound must be "proxy", "direct", "auto", or a proxy tag of this node\'s configs; at most 100 rules. Only applied when the subscription\'s overall-client template provides a route_rules splice point (e.g. client-default-ts).' }}
               </template>
             </n-form-item>
           </n-form>
@@ -109,6 +109,13 @@
         <n-code :code="JSON.stringify(preview.server_config, null, 2)" language="json" />
         <n-h5 style="margin-top: var(--space-md)">Client Config</n-h5>
         <n-code :code="JSON.stringify(preview.client_config, null, 2)" language="json" />
+        <template v-if="parsedRouteRules.length > 0">
+          <n-h5 style="margin-top: var(--space-md)">Custom Route Rules</n-h5>
+          <n-code :code="JSON.stringify(parsedRouteRules, null, 2)" language="json" />
+          <n-text depth="3" style="font-size: 12px; display: block; margin-top: var(--space-xs)">
+            Not included in the rendered configs above — these are spliced into the subscription's client config at delivery time (requires the subscription's overall-client template to provide a route_rules splice point, e.g. client-default-ts).
+          </n-text>
+        </template>
         <div class="form-actions" style="margin-top: var(--space-md)">
           <n-button @click="step = 2">Back</n-button>
           <n-button type="primary" :loading="submitting" @click="handleSubmit">Create</n-button>

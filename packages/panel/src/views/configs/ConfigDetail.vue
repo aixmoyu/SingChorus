@@ -57,7 +57,7 @@
           <n-button size="small" @click="formatJson('rules')" :disabled="isRemote">Format</n-button>
         </div>
         <n-text depth="3" style="font-size: 12px">
-          Optional — a JSON array of sing-box route rules spliced into the subscription's client config. Empty = none.
+          Optional — a JSON array of sing-box route rules spliced into the subscription's client config. Empty = none. A rule's outbound must be "proxy", "direct", "auto", or a proxy tag of this node's configs; at most 100 rules. Only applied when the subscription's overall-client template provides a route_rules splice point (e.g. client-default-ts).
         </n-text>
       </div>
     </n-card>
@@ -152,13 +152,22 @@ const dirty = computed(() => {
   return false
 })
 
+/** The four JSON textareas: single source of truth for parse/format/labels. */
+const TEXT_FIELDS = {
+  server: { text: serverText, label: 'Server config' },
+  client: { text: clientText, label: 'Client config' },
+  params: { text: paramsText, label: 'Params' },
+  rules: { text: routeRulesText, label: 'Route rules' },
+} as const
+type TextFieldKey = keyof typeof TEXT_FIELDS
+
 /** Parse a textarea's JSON, surfacing invalid input to the user. */
-function parseJsonField(side: 'server' | 'client' | 'params' | 'rules'): Record<string, unknown> | unknown[] | null {
-  const text = side === 'server' ? serverText.value : side === 'client' ? clientText.value : side === 'params' ? paramsText.value : routeRulesText.value
+function parseJsonField(side: TextFieldKey): Record<string, unknown> | unknown[] | null {
+  const { text, label } = TEXT_FIELDS[side]
   try {
-    return JSON.parse(text)
+    return JSON.parse(text.value)
   } catch (e) {
-    message.error(`${side === 'params' ? 'Params' : side === 'server' ? 'Server config' : side === 'client' ? 'Client config' : 'Route rules'} is not valid JSON: ${(e as Error).message}`)
+    message.error(`${label} is not valid JSON: ${(e as Error).message}`)
     return null
   }
 }
@@ -174,12 +183,12 @@ function parseRouteRules(): unknown[] | null {
   return parsed
 }
 
-function formatJson(side: 'server' | 'client' | 'params' | 'rules') {
-  const text = side === 'server' ? serverText : side === 'client' ? clientText : side === 'params' ? paramsText : routeRulesText
+function formatJson(side: TextFieldKey) {
+  const { text, label } = TEXT_FIELDS[side]
   try {
     text.value = JSON.stringify(JSON.parse(text.value), null, 2)
   } catch {
-    message.warning(`${side === 'params' ? 'Params' : side === 'server' ? 'Server config' : side === 'client' ? 'Client config' : 'Route rules'} is not valid JSON — cannot format.`)
+    message.warning(`${label} is not valid JSON — cannot format.`)
   }
 }
 

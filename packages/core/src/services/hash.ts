@@ -26,7 +26,13 @@ export function computeContentHash(
     stableStringify(server),
     stableStringify(client),
     stableStringify(params),
-    stableStringify(routeRules),
   ];
+  // 空规则不产生第 4 段：与引入 route_rules 之前的三段格式完全一致。
+  // 否则存量条目（本地存的是旧格式 hash）在「无实质修改的保存」后会被
+  // update() 误判为内容已变更，触发 deployed=false → 配置从订阅中下线。
+  // 非空规则仍完整计入（[] 与 [rule] 之间、规则内容之间的变更都能被感知）。
+  if (routeRules.length > 0) {
+    parts.push(stableStringify(routeRules));
+  }
   return createHash('sha256').update(parts.join('|')).digest('hex');
 }

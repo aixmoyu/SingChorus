@@ -71,7 +71,7 @@ render.post('/', adminAuth, async (c) => {
     return c.json({ error: badVersion(body.singboxVersion) }, 400);
   }
 
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
 
   if (body.singboxVersion) {
@@ -121,7 +121,7 @@ render.post('/deploy', adminAuth, async (c) => {
     return c.json({ error: badVersion(body.singboxVersion) }, 400);
   }
 
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
 
   const serverOverallId = body.serverOverallId || 'server-default';
@@ -216,7 +216,7 @@ render.post('/overall', adminAuth, async (c) => {
     return c.json({ error: { code: 'INVALID_CATEGORY', message: "category must be 'server', 'client', or 'docker'" } }, 400);
   }
 
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
 
   try {

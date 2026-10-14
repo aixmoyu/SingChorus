@@ -8,7 +8,8 @@ import { recordSchema, toCoreError } from './helpers.js'
 const router = Router()
 router.use(requireAuth)
 
-const routeRulesSchema = z.array(recordSchema);
+// Cap mirrors core's MAX_ROUTE_RULES — reject oversized payloads at the edge.
+const routeRulesSchema = z.array(recordSchema).max(100);
 
 const createConfigSchema = z.object({
   name: z.string().min(1).max(64),

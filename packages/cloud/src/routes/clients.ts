@@ -2,13 +2,21 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { adminAuth } from '../auth/middleware';
+import { safeParseObject, safeParseArray } from '../services/safe-parse';
 
 const upsertSchema = z.object({
   config: z.record(z.unknown()),
   server_config: z.record(z.unknown()).optional(),
   params: z.record(z.unknown()).optional(),
   // Custom route rules spliced into the client template's {{ route_rules }}.
-  route_rules: z.array(z.record(z.unknown())).optional(),
+  // Length cap + a structural outbound check (cloud doesn't know the node's
+  // proxy tags — semantic outbound validation happens core-side at write time).
+  route_rules: z.array(
+    z.record(z.unknown()).refine(
+      (r) => r.outbound === undefined || (typeof r.outbound === 'string' && r.outbound.length > 0),
+      { message: 'outbound must be a non-empty string when present' },
+    ),
+  ).max(100).optional(),
   protocol_type: z.string().min(1),
   content_hash: z.string().optional(),
   enabled: z.boolean().optional(),
@@ -63,8 +71,8 @@ function toFullRecord(row: ClientConfigRow): Record<string, unknown> {
     name: row.name,
     fingerprint: row.fingerprint,
     config: JSON.parse(row.config),
-    server_config: safeParse(row.server_config),
-    params: safeParse(row.params),
+    server_config: safeParseObject(row.server_config),
+    params: safeParseObject(row.params),
     route_rules: safeParseArray(row.route_rules),
     protocol_type: row.protocol_type,
     content_hash: row.content_hash,
@@ -74,28 +82,6 @@ function toFullRecord(row: ClientConfigRow): Record<string, unknown> {
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
-}
-
-/** server_config/params may be absent on rows created before they existed. */
-function safeParse(json: string | undefined | null): Record<string, unknown> {
-  if (!json) return {};
-  try {
-    const parsed = JSON.parse(json);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-/** route_rules may be absent on rows created before the column existed. */
-function safeParseArray(json: string | undefined | null): unknown[] {
-  if (!json) return [];
-  try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
 
 // List all clients across every node (metadata-only: 1 indexed query, no bodies).

@@ -182,4 +182,28 @@ describe('template port verification', () => {
     // template rules preserved after the spliced ones
     expect(withRules.route.rules.slice(2)).toEqual(T(clientTsTemplate).route.rules.slice(1));
   });
+
+  // B3 可观测性：实例携带自定义规则但模板没有 {{ route_rules }} 拼接点 →
+  // 规则被静默丢弃前必须打 warn；模板有拼接点 → 不告警。
+  it('renderClientOverall warns when custom rules hit a template without a route_rules splice point', async () => {
+    const instances = [{ id: 'i1', serverConfig: {}, clientConfig: { tag: 'proxy-a' }, routeRules: [{ domain: ['example.com'], outbound: 'direct' }] }];
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    // client-default 模板没有 route_rules 拼接点（内置种子中仅 default-ts 有）
+    const db = makeMockDB([mkRow('client-default', 'overall-client', clientTemplate)]);
+    const reg = new PluginRegistry(db, logger as any);
+    await reg.loadAll();
+    await reg.renderClientOverall(instances, 'client-default', {});
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(String(logger.warn.mock.calls[0][0])).toContain('route_rules');
+
+    // 有拼接点的模板：规则正常拼入，不告警
+    resetRegistryCache();
+    const logger2 = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const db2 = makeMockDB([mkRow('client-default-ts', 'overall-client', clientTsTemplate)]);
+    const reg2 = new PluginRegistry(db2, logger2 as any);
+    await reg2.loadAll();
+    await reg2.renderClientOverall(instances, 'client-default-ts', {});
+    expect(logger2.warn).not.toHaveBeenCalled();
+  });
 });

@@ -160,6 +160,7 @@ export class ChorusCore {
       config: entry.client_config,
       server_config: entry.server_config,
       params: entry.params,
+      route_rules: entry.route_rules,
       protocol_type: entry.type,
       content_hash: entry.content_hash,
       enabled: entry.enabled,

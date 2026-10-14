@@ -10,6 +10,7 @@ import { resolveAndValidate } from './validator';
 import { replacePlaceholders } from './interpolator';
 import { renderDocker, type DockerOverrides } from './docker_renderer';
 import { PluginError } from './errors';
+import type { Logger } from '../logger';
 
 export interface ProtocolInstanceConfig {
   id: string;
@@ -22,6 +23,20 @@ export interface ProtocolInstanceConfig {
 
 function normalizeToken(s: string): string {
   return s.replace(/\s+/g, '');
+}
+
+/** Normalized splice token for custom route rules (whitespace-insensitive). */
+const ROUTE_RULES_TOKEN = normalizeToken('{{ route_rules }}');
+
+/** Whether a rendered-template tree mentions the given (normalized) splice
+ *  token anywhere — used to detect templates that would silently drop rules. */
+function containsToken(node: unknown, token: string): boolean {
+  if (typeof node === 'string') return normalizeToken(node).includes(token);
+  if (Array.isArray(node)) return node.some((n) => containsToken(n, token));
+  if (node && typeof node === 'object') {
+    return Object.values(node as Record<string, unknown>).some((v) => containsToken(v, token));
+  }
+  return false;
 }
 
 function splicePlaceholders(
@@ -148,13 +163,17 @@ export function invalidateTemplateCache(): void {
 
 export class PluginRegistry {
   private db: D1Database;
+  /** Optional request-scoped logger — diagnostics only (e.g. silently-dropped
+   *  route rules); rendering itself never depends on it. */
+  private logger?: Logger;
 
   /** Cache TTL: templates edited by an admin become visible to rendering
    *  within this window without waiting for an isolate restart. */
   private static CACHE_TTL_MS = 30_000;
 
-  constructor(db: D1Database) {
+  constructor(db: D1Database, logger?: Logger) {
     this.db = db;
+    this.logger = logger;
   }
 
   async loadAll(): Promise<void> {
@@ -299,6 +318,21 @@ export class PluginRegistry {
 
     const resolved = resolveAndValidate(paramDefs as any, overallParams);
     const parsedTemplate = p.templateContent ?? JSON.parse(overall.templateContent);
+    if (side === 'client') {
+      // 可观测性（B3）：实例携带了自定义规则、但模板没有 {{ route_rules }} 拼接点
+      // 时，规则会被 splice 静默丢弃——打 warn 让管理员能在日志里定位，而不是
+      // 交付出去的配置「看起来正常却没有生效规则」。
+      const ruleCount = instances.reduce(
+        (n, i) => n + (Array.isArray(i.routeRules) ? i.routeRules.length : 0),
+        0,
+      );
+      if (ruleCount > 0 && !containsToken(parsedTemplate, ROUTE_RULES_TOKEN)) {
+        this.logger?.warn(
+          'overall-client template has no {{ route_rules }} splice point — custom route rules were not applied',
+          { template: overallId, rules: ruleCount, instances: instances.length },
+        );
+      }
+    }
     const spliced = splicePlaceholders(parsedTemplate, replacements);
     return replacePlaceholders(spliced, resolved) as Record<string, unknown>;
   }

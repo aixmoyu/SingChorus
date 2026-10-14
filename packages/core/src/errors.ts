@@ -14,6 +14,7 @@ export const ERRORS = {
   CFG_TAG_IMMUTABLE: { code: 'CFG_TAG_IMMUTABLE', message: 'Tag cannot be changed after creation', status: 400 },
   CFG_PORT_CONFLICT: { code: 'CFG_PORT_CONFLICT', message: 'Port already in use by another config on this machine', status: 409 },
   CFG_NONE_ENABLED: { code: 'CFG_NONE_ENABLED',  message: 'No enabled configs to deploy', status: 400 },
+  CFG_ROUTE_RULES_INVALID: { code: 'CFG_ROUTE_RULES_INVALID', message: 'Invalid route rules', status: 422 },
   DEPLOY_FAILED:    { code: 'DEPLOY_FAILED',     message: 'Deployment failed',           status: 500 },
   CLOUD_UNREACHABLE:  { code: 'CLOUD_UNREACHABLE',   message: 'Cloud service unreachable',  status: 503 },
   CLOUD_GENERATE_FAILED: { code: 'CLOUD_GENERATE_FAILED', message: 'Config generation failed', status: 502 },

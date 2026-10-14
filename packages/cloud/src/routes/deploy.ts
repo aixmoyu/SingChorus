@@ -47,7 +47,7 @@ deploy.post('/:nodeId', adminAuth, async (c) => {
     return c.json({ error: { code: 'NO_DOCKER_OVERALL', message: 'Node has no docker template assigned' } }, 400);
   }
 
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
 
   const instanceConfigs: Array<{ id: string; serverConfig: Record<string, unknown>; clientConfig: Record<string, unknown> }> = [];

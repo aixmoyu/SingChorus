@@ -60,7 +60,7 @@ protocolInstances.post('/', adminAuth, zValidator('json', createInstanceSchema),
     return c.json({ error: { code: 'PROTO_NOT_FOUND', message: `Protocol '${body.protocolId}' not found` } }, 404);
   }
 
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
 
   const rendered = await reg.renderProtocolInstance(body.protocolId, body.params);
@@ -103,7 +103,7 @@ protocolInstances.put('/:id', adminAuth, zValidator('json', z.object({
     if (extractTag(body.params) !== extractTag(existingParams)) {
       return c.json({ error: { code: 'TAG_IMMUTABLE', message: 'Tag cannot be changed after creation' } }, 400);
     }
-    const reg = new PluginRegistry(c.env.DB);
+    const reg = new PluginRegistry(c.env.DB, c.get('logger'));
     await reg.loadAll();
     const instance = existing as any;
     try {
@@ -176,7 +176,7 @@ protocolInstances.post('/rerender', adminAuth, async (c) => {
   // Force a fresh template load — the 30s shared cache may still hold the
   // pre-edit definition this endpoint exists to pick up.
   invalidateTemplateCache();
-  const reg = new PluginRegistry(c.env.DB);
+  const reg = new PluginRegistry(c.env.DB, c.get('logger'));
   await reg.loadAll();
 
   const query = protocolId
